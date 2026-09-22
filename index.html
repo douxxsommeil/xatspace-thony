@@ -138,18 +138,31 @@
     z-index:20;
     display:flex; justify-content:center;
     padding: 0 18px;
-    padding-bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: 0;
+    max-height:0;
+    overflow:hidden;
+    visibility:hidden;
     opacity:0; transform: translateY(14px);
-    transition: opacity .8s ease .25s, transform .8s ease .25s;
+    transition: opacity .35s ease, transform .35s ease, max-height .35s ease, padding-bottom .35s ease, visibility 0s linear .35s;
     pointer-events:none;
   }
-  #dock.show{ opacity:1; transform:translateY(0); pointer-events:auto; }
+  #dock.show{
+    opacity:1; transform:translateY(0); pointer-events:auto;
+    visibility:visible;
+    max-height:160px;
+    padding-bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+    transition: opacity .35s ease, transform .35s ease, max-height .35s ease, padding-bottom .35s ease, visibility 0s;
+  }
   /* Auto-hide: una vez mostrado, si el mouse deja de moverse el dock se
      desvanece (transición más lenta, sensación de "asentarse"); al mover
      el mouse vuelve a aparecer casi al instante. */
   #dock.show.idle{
     opacity:0;
-    transition: opacity 1.1s ease, transform 1.1s ease;
+    max-height:0;
+    padding-top:0;
+    padding-bottom:0;
+    visibility:hidden;
+    transition: opacity .35s ease, transform .35s ease, max-height .35s ease, padding-bottom .35s ease, visibility 0s linear .35s;
     pointer-events:none;
   }
 
@@ -158,6 +171,7 @@
     background:var(--ui-bg);
     border:1px solid var(--ui-border);
     border-radius:16px;
+    box-shadow: 0 18px 50px rgba(0,0,0,0.75), 0 0 0 1px rgba(255,255,255,0.05);
     padding:13px 18px 13px 11px;
     backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
     max-width:min(92vw, 430px);
@@ -258,7 +272,9 @@
   .spotify-toggle:hover{ border-color:rgba(255,255,255,0.3); color:var(--ink); }
   .spotify-toggle.on{ color:var(--ink); border-color:rgba(255,255,255,0.34); }
 
-  /* ================= Spotify panel ================= */
+  /* ================= Spotify panel =================
+     Alturas sincronizadas con el embed (ajustar aqui si Spotify cambia):
+     desktop expandido 352px / compacto 152px / mobile 300px. */
   #spotifyPanel{
     position:fixed;
     left:0; right:0;
@@ -266,30 +282,87 @@
     z-index:19;
     display:flex; justify-content:center;
     padding: 0 18px;
-    padding-bottom: calc(122px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: 0;
     max-height:0;
     opacity:0;
+    visibility:hidden;
     overflow:hidden;
-    transition: max-height .5s cubic-bezier(.22,.8,.32,1), opacity .4s ease, padding-bottom .5s ease;
+    transition: max-height .5s cubic-bezier(.22,.8,.32,1), opacity .4s ease, padding-bottom .5s ease, visibility 0s linear .5s;
     pointer-events:none;
   }
   #spotifyPanel.show{
-    max-height:min(390px, 52vh);
+    padding-bottom: calc(122px + env(safe-area-inset-bottom, 0px));
+    max-height:calc(352px + 122px + 24px);
     opacity:1;
+    visibility:visible;
+    transition: max-height .5s cubic-bezier(.22,.8,.32,1), opacity .4s ease, padding-bottom .5s ease, visibility 0s;
     pointer-events:auto;
   }
   #spotifyPanel.show.idle{
     opacity:0;
+    max-height:0;
+    padding-bottom:0;
+    visibility:hidden;
     pointer-events:none;
-    transition: max-height .5s cubic-bezier(.22,.8,.32,1), opacity 1.1s ease, padding-bottom .5s ease;
+    transition: max-height .5s cubic-bezier(.22,.8,.32,1), opacity 1.1s ease, padding-bottom .5s ease, visibility 0s linear .5s;
+  }
+  /* Hover-reveal: fondo visible, cards decorativas ocultas y colapsadas */
+  #dock.show.reveal-hidden{
+    opacity:0;
+    max-height:0;
+    padding-top:0;
+    padding-bottom:0;
+    visibility:hidden;
+    pointer-events:none;
+    transition: opacity .35s ease, transform .35s ease, max-height .35s ease, padding-bottom .35s ease, visibility 0s linear .35s;
+  }
+  /* Flash blanco fullscreen al pulsar play (una vez, no bloquea) */
+  #flash{
+    position:fixed; inset:0; z-index:90;
+    background:#fff;
+    opacity:0;
+    pointer-events:none;
+  }
+  #flash.go{ opacity:1; transition:none; }
+  #flash.fade{ opacity:0; transition: opacity .45s ease; }
+  /* Toast "ahora se esta reproduciendo": simulado en pagina, sin Notification API */
+  #nowPlaying{
+    position:fixed; right:18px; z-index:30;
+    bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+    display:flex; align-items:center; gap:10px;
+    max-width:min(86vw, 300px);
+    background:var(--ui-bg-solid);
+    border:1px solid var(--ui-border);
+    border-radius:12px;
+    padding:9px 12px 9px 9px;
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    box-shadow: 0 18px 50px rgba(0,0,0,0.75);
+    opacity:0; transform:translateY(10px);
+    transition: opacity .3s ease, transform .3s ease;
+    pointer-events:none;
+  }
+  #nowPlaying.show{ opacity:1; transform:translateY(0); pointer-events:auto; }
+  #nowPlaying img{ width:40px; height:40px; border-radius:8px; object-fit:cover; flex:none; background:#0a0a0a; }
+  #nowPlaying .np-sub{ font-size:9.5px; letter-spacing:.14em; color:var(--ink-dim); }
+  #nowPlaying .np-title{ font-size:12px; color:var(--ink); margin-top:2px; }
+  @media (prefers-reduced-motion: reduce){
+    #flash{ display:none; }
   }
   .spotify-frame-wrap{
     width:min(92vw, 420px);
+    height:352px;
     border-radius:12px;
     overflow:hidden;
-    box-shadow: 0 14px 44px rgba(0,0,0,0.55);
-    background:#101010;
+    line-height:0;
+    box-shadow: 0 18px 50px rgba(0,0,0,0.75), 0 0 0 1px rgba(255,255,255,0.06);
+    background:#000;
     border:1px solid var(--ui-border);
+    transition: box-shadow .18s ease, border-color .18s ease, height .45s cubic-bezier(.22,.8,.32,1);
+  }
+  /* Halo reactivo solido: misma silueta rounded-rect, mas elevacion */
+  .spotify-frame-wrap.halo-near{
+    box-shadow: 0 26px 70px rgba(0,0,0,0.85), 0 0 0 1px rgba(232,232,230,0.22);
+    border-color:rgba(255,255,255,0.28);
   }
   .spotify-frame-wrap iframe{
     display:block;
@@ -297,6 +370,16 @@
     width:100%;
     height:352px;
     border-radius:12px;
+    background:#000;
+  }
+  /* Op3 hover-expand: reposo compacto 152px (cabecera), hover/focus/tap expande a 352px */
+  #spotifyPanel.compact .spotify-frame-wrap{
+    height:152px;
+  }
+  #spotifyPanel.compact .spotify-frame-wrap:hover,
+  #spotifyPanel.compact .spotify-frame-wrap:focus-within,
+  #spotifyPanel.compact.expanded .spotify-frame-wrap{
+    height:352px;
   }
 
   @media (max-width:480px){
@@ -304,7 +387,13 @@
     .avatar-wrap{ width:46px; height:46px; }
     .name-glitch{ font-size:24px; }
     .quote-line{ font-size:12px; }
-    #spotifyPanel{ padding-bottom: calc(108px + env(safe-area-inset-bottom, 0px)); }
+    #spotifyPanel.show{ padding-bottom: calc(108px + env(safe-area-inset-bottom, 0px)); max-height:calc(300px + 108px + 24px); }
+    .spotify-frame-wrap, .spotify-frame-wrap iframe{ height:300px; }
+    #spotifyPanel.compact .spotify-frame-wrap{ height:140px; }
+    #spotifyPanel.compact .spotify-frame-wrap:hover,
+    #spotifyPanel.compact .spotify-frame-wrap:focus-within,
+    #spotifyPanel.compact.expanded .spotify-frame-wrap,
+    #spotifyPanel.compact.expanded .spotify-frame-wrap iframe{ height:300px; }
   }
 
   #loader{
@@ -334,6 +423,18 @@
 
 <div id="stage">
   <canvas id="ascii"></canvas>
+</div>
+
+<div id="flash" aria-hidden="true"></div>
+
+<audio id="ambientAudio" preload="auto" src="assets/ambient.mp3"></audio>
+
+<div id="nowPlaying" role="status" aria-live="polite">
+  <img id="npCover" alt="Caratula del album" crossorigin="anonymous">
+  <div>
+    <div class="np-sub">AHORA SE ESTA REPRODUCIENDO</div>
+    <div class="np-title" id="npTitle"></div>
+  </div>
 </div>
 
 <div id="playGate">
@@ -460,6 +561,61 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
   let canvas, ctx;
   let cellPx = 10;      // tamaño de celda en px, se recalcula on resize
   let cols = 0, rows = 0;
+  // Repulsion dura con forma de card: rects en px CSS relativos al canvas.
+  // Margen de exclusion opaco (sin filtraciones) alrededor de cada card.
+  const REPEL_MARGIN = 12;
+  let repelRects = [];
+  function pointInRoundedRect(px, py, r) {
+    if (px < r.x || px > r.x + r.w || py < r.y || py > r.y + r.h) return 0;
+    const rad = Math.min(r.r, r.w / 2, r.h / 2);
+    // Interior central: dentro seguro
+    if (px >= r.x + rad && px <= r.x + r.w - rad) return 1;
+    if (py >= r.y + rad && py <= r.y + r.h - rad) return 1;
+    // Esquinas: test circular
+    const cx = px < r.x + rad ? r.x + rad : r.x + r.w - rad;
+    const cy = py < r.y + rad ? r.y + rad : r.y + r.h - rad;
+    const dx = px - cx, dy = py - cy;
+    return (dx * dx + dy * dy <= rad * rad) ? 1 : 0;
+  }
+  function pointInExclusion(px, py, r) {
+    const m = REPEL_MARGIN;
+    const ex = r.x - m, ey = r.y - m, ew = r.w + m * 2, eh = r.h + m * 2;
+    if (px < ex || px > ex + ew || py < ey || py > ey + eh) return 0;
+    if (pointInRoundedRect(px, py, r)) return 1;
+    // Franja del margen: tambien exclusion total, con esquinas redondeadas extendidas
+    const rad = Math.min(r.r + m, ew / 2, eh / 2);
+    if (px >= ex + rad && px <= ex + ew - rad) return 1;
+    if (py >= ey + rad && py <= ey + eh - rad) return 1;
+    const cx = px < ex + rad ? ex + rad : ex + ew - rad;
+    const cy = py < ey + rad ? ey + rad : ey + eh - rad;
+    const dx = px - cx, dy = py - cy;
+    return (dx * dx + dy * dy <= rad * rad) ? 1 : 0;
+  }
+  function updateRepelRects() {
+    repelRects = [];
+    try {
+      const cv = document.getElementById('ascii');
+      if (!cv) return;
+      const cvBox = cv.getBoundingClientRect();
+      const dock = document.getElementById('dock');
+      const dockHidden = dock && (!dock.classList.contains('show') ||
+        dock.classList.contains('idle') || dock.classList.contains('reveal-hidden'));
+      const push = (el, rad) => {
+        if (!el) return;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return;
+        if (style.opacity === '0') return;
+        const b = el.getBoundingClientRect();
+        if (b.width < 4 || b.height < 4) return;
+        repelRects.push({ x: b.left - cvBox.left, y: b.top - cvBox.top, w: b.width, h: b.height, r: rad });
+      };
+      if (!dockHidden) push(document.querySelector('.card'), 16);
+      const panel = document.getElementById('spotifyPanel');
+      if (panel && panel.classList.contains('show') && !panel.classList.contains('idle')) {
+        push(panel.querySelector('.spotify-frame-wrap'), 12);
+      }
+    } catch (e) { /* repulsion es decorativa, nunca rompe el render */ }
+  }
   let lastTime = 0;
 
   // ---------------------------------------------------------------------
@@ -607,6 +763,19 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
         // Fondo casi negro real -> espacio (mantiene el negro sólido)
         if (b < 14) continue;
 
+        // Repulsion dura con forma de card: dentro + margen = skip 100%, sin filtraciones.
+        if (repelRects.length) {
+          let excluded = false;
+          for (let ri = 0; ri < repelRects.length; ri++) {
+            const r = repelRects[ri];
+            // Early-out por bbox del margen (barato) antes del test rounded-rect.
+            const m = REPEL_MARGIN;
+            if (px < r.x - m || px > r.x + r.w + m || py < r.y - m || py > r.y + r.h + m) continue;
+            if (pointInExclusion(px, py, r)) { excluded = true; break; }
+          }
+          if (excluded) continue;
+        }
+
         let idx = rampIndexForBrightness(b, gamma);
 
         // Parpadeo controlado: con probabilidad `flicker`, saltamos a un
@@ -655,7 +824,11 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
   //    fijo, velocidad 1x, gamma neutro). Solo queda el listener de resize.
   // ---------------------------------------------------------------------
   function setupUI() {
-    window.addEventListener('resize', resize);
+    window.addEventListener('resize', () => { resize(); updateRepelRects(); });
+    // Respaldo ocasional; la via principal son llamadas sincronas en cada cambio.
+    setInterval(updateRepelRects, 2000);
+    // Exponer para que el overlay refresque tras abrir/cerrar panel.
+    window.__updateRepelRects = updateRepelRects;
   }
 
   // ---------------------------------------------------------------------
@@ -857,27 +1030,98 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
   }
 
   // -----------------------------------------------------------------------
-  // Spotify: helpers para abrir/cerrar el panel. autoplay=1 en el src hace
-  // que el embed intente reproducir apenas carga (algunos navegadores
-  // igual piden una interacción extra por su política de autoplay, pero
-  // como esto se dispara desde el propio click del botón de play, cuenta
-  // como gesto del usuario y debería reproducir sin bloqueo).
+  // Spotify: helpers para abrir/cerrar el panel. En aperturas por toggle se
+  // usa SPOTIFY_SRC (con autoplay=1) para que el embed suene: el click del
+  // toggle cuenta como gesto del usuario. En la entrada se carga
+  // SPOTIFY_SRC_SILENT (mismo embed sin autoplay) para mostrar el playlist
+  // sin tapar la pista ambiente que arranca con el boton de play.
   // -----------------------------------------------------------------------
   const SPOTIFY_SRC = "https://open.spotify.com/embed/album/1OARrXe5sB0gyy3MhQ8h92?utm_source=generator&si=d550f7f7d19c4e3c&autoplay=1";
+  const SPOTIFY_SRC_SILENT = SPOTIFY_SRC.replace("&autoplay=1", ""); // entrada: playlist visible, silencioso
   let spotifyLoaded = false;
   let spotifyOpen = false;
+  let spotifyAutoplay = false; // true cuando el embed ya carga con autoplay=1
 
-  function openSpotify() {
+  // Pista ambiente local + metadata desde Spotify oEmbed API (gratis, sin credenciales).
+  const TRACK_TITLE = "The Weeknd \u2014 Hurricane (Live At SoFi Stadium)";
+  const TRACK_COVER = "https://image-cdn-fa.spotifycdn.com/image/ab67616d00001e02308f9319a3d6f6737f43b3fc";
+  let ambientWasPlaying = false;
+  let ambientResumePending = false;
+  let toastTimer = null;
+
+  function ambientEl() { return document.getElementById('ambientAudio'); }
+
+  function playAmbient() {
+    const audio = ambientEl();
+    if (!audio) return;
+    // Sin src util no hay nada que reproducir: degradacion silenciosa.
+    if (!audio.currentSrc && !audio.src) return;
+    const p = audio.play();
+    if (p && typeof p.catch === 'function') {
+      p.then(() => { ambientResumePending = false; })
+       .catch(() => { ambientResumePending = true; });
+    }
+  }
+
+  function retryAmbient() {
+    if (ambientResumePending) playAmbient();
+  }
+
+  function pauseAmbient() {
+    const audio = ambientEl();
+    if (!audio) return;
+    try {
+      if (!audio.paused) {
+        audio.pause();
+        ambientWasPlaying = true;
+      }
+    } catch (e) { /* degradacion silenciosa */ }
+  }
+
+  function showNowPlaying() {
+    const toast = document.getElementById('nowPlaying');
+    if (!toast) return;
+    document.getElementById('npTitle').textContent = TRACK_TITLE;
+    const cover = document.getElementById('npCover');
+    if (TRACK_COVER) {
+      cover.style.display = '';
+      cover.src = TRACK_COVER;
+      cover.onerror = () => { cover.style.display = 'none'; };
+    } else {
+      cover.style.display = 'none';
+    }
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 4000);
+    toast.onclick = () => {
+      clearTimeout(toastTimer);
+      toast.classList.remove('show');
+    };
+  }
+
+  function openSpotify(origen) {
     const toggle = document.getElementById('spotifyToggle');
     const panel = document.getElementById('spotifyPanel');
     const iframe = document.getElementById('spotifyIframe');
+    const desdeEntrada = (origen === 'gate');
     spotifyOpen = true;
     toggle.classList.add('on');
     panel.classList.add('show');
+    panel.classList.add('compact');
+    panel.classList.remove('idle');
+    if (!desdeEntrada) pauseAmbient(); // ducking: solo cuando abre el toggle
+    // Carga inicial: sin autoplay en la entrada (playlist visible mientras
+    // suena la ambiente); con autoplay cuando abre el toggle. Si el panel
+    // abrio en silencio y luego abre por toggle, migra a autoplay una sola vez.
     if (!spotifyLoaded) {
-      iframe.src = SPOTIFY_SRC;
+      iframe.src = desdeEntrada ? SPOTIFY_SRC_SILENT : SPOTIFY_SRC;
       spotifyLoaded = true;
+      spotifyAutoplay = !desdeEntrada;
+    } else if (!desdeEntrada && !spotifyAutoplay) {
+      iframe.src = SPOTIFY_SRC;
+      spotifyAutoplay = true;
     }
+    if (window.__updateRepelRects) setTimeout(window.__updateRepelRects, 550);
   }
 
   function closeSpotify() {
@@ -886,18 +1130,57 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     spotifyOpen = false;
     toggle.classList.remove('on');
     panel.classList.remove('show');
+    panel.classList.remove('expanded');
+    setPinned(false);
+    if (ambientWasPlaying) {
+      ambientWasPlaying = false;
+      playAmbient();
+      showNowPlaying();
+    }
+    if (window.__updateRepelRects) setTimeout(window.__updateRepelRects, 550);
+  }
+
+  // Pin acotado al uso real (no a "abierto"): protege el scroll sin dejarlo siempre visible.
+  let pinGraceTimer = null;
+  function setPinned(on) {
+    const panel = document.getElementById('spotifyPanel');
+    if (on) {
+      clearTimeout(pinGraceTimer);
+      if (!panel.classList.contains('pinned')) panel.classList.add('pinned');
+      panel.classList.remove('idle');
+    } else {
+      clearTimeout(pinGraceTimer);
+      pinGraceTimer = setTimeout(() => panel.classList.remove('pinned'), 300);
+    }
   }
 
   function setupSpotify() {
     const toggle = document.getElementById('spotifyToggle');
+    const panel = document.getElementById('spotifyPanel');
+    const wrap = panel.querySelector('.spotify-frame-wrap');
     toggle.addEventListener('click', () => {
+      retryAmbient(); // reintento si un play() anterior fue bloqueado por autoplay
       if (spotifyOpen) closeSpotify(); else openSpotify();
     });
+    // Tap = hover en touch: alterna expandido en modo compact.
+    wrap.addEventListener('click', () => {
+      if (panel.classList.contains('compact') && spotifyOpen) {
+        panel.classList.toggle('expanded');
+        if (window.__updateRepelRects) setTimeout(window.__updateRepelRects, 500);
+      }
+    });
+    // Pin solo mientras el puntero/foco esta dentro; wheel rearma (scroll sin mover mouse).
+    wrap.addEventListener('mouseenter', () => setPinned(true));
+    wrap.addEventListener('mouseleave', () => setPinned(false));
+    wrap.addEventListener('focusin', () => setPinned(true));
+    wrap.addEventListener('focusout', () => setPinned(false));
+    wrap.addEventListener('wheel', () => setPinned(true), { passive: true });
   }
 
   // -----------------------------------------------------------------------
-  // Play gate: al presionar, se revela la card Y el reproductor de Spotify
-  // juntos, y el embed arranca a sonar (autoplay=1 + gesto de click).
+  // Play gate: al presionar suena la pista ambiente, se revela la card y el
+  // playlist Spotify queda visible SIN autoplay (para no tapar la pista).
+  // Spotify con sonido solo llega por su toggle, con ducking.
   // -----------------------------------------------------------------------
   function setupPlayGate() {
     const gate = document.getElementById('playGate');
@@ -905,12 +1188,44 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     const dock = document.getElementById('dock');
 
     btn.addEventListener('click', () => {
+      firePlayFlash();
       gate.classList.add('hidden');
       dock.classList.add('show');
       playDecodeAnimation();
       setupAutoReset();
-      openSpotify();
+      playAmbient(); // gesto del usuario: arranque de la pista ambiente
+      openSpotify('gate'); // playlist visible sin autoplay, no tapa la pista
+      showNowPlaying(); // notificacion simulada en la entrada
+      refreshRepelGlobal();
     });
+  }
+
+  // Flash blanco unico al pulsar play: fullscreen, <600ms, no bloquea.
+  let flashDone = false;
+  function refreshRepelGlobal() {
+    if (window.__updateRepelRects) {
+      window.__updateRepelRects();
+      setTimeout(window.__updateRepelRects, 400);
+    }
+  }
+  function firePlayFlash() {
+    if (flashDone) return;
+    flashDone = true;
+    try {
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      const flash = document.getElementById('flash');
+      if (!flash) return;
+      flash.classList.remove('fade');
+      flash.classList.add('go');
+      void flash.offsetWidth; // reflow para forzar el estado inicial
+      requestAnimationFrame(() => {
+        flash.classList.remove('go');
+        flash.classList.add('fade');
+      });
+      const cleanup = () => flash.classList.remove('fade');
+      flash.addEventListener('transitionend', cleanup, { once: true });
+      setTimeout(cleanup, 700);
+    } catch (e) { /* flash decorativo, nunca rompe el play */ }
   }
 
   // -----------------------------------------------------------------------
@@ -924,14 +1239,28 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     const dock = document.getElementById('dock');
     const panel = document.getElementById('spotifyPanel');
     const card = document.querySelector('.card');
+    const wrap = panel.querySelector('.spotify-frame-wrap');
+    const stage = document.getElementById('stage');
 
     const IDLE_DELAY = 2400; // ms de quietud antes de desvanecer
+    const REVEAL_DELAY = 300; // hover en fondo antes de ocultar cards
     let idleTimer = null;
+    let revealTimer = null;
     let pointerOverUI = false;
+
+    function refreshRepel() {
+      if (window.__updateRepelRects) window.__updateRepelRects();
+    }
 
     function reveal() {
       dock.classList.remove('idle');
-      panel.classList.remove('idle');
+      dock.classList.remove('reveal-hidden');
+      // El panel pineado nunca recibe idle mientras esta abierto/en uso.
+      if (!panel.classList.contains('pinned')) {
+        panel.classList.remove('idle');
+      }
+      clearTimeout(revealTimer);
+      refreshRepel();
     }
 
     function armIdleTimer() {
@@ -939,12 +1268,25 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
       idleTimer = setTimeout(() => {
         if (!pointerOverUI) {
           dock.classList.add('idle');
-          panel.classList.add('idle');
+          if (!panel.classList.contains('pinned')) {
+            panel.classList.add('idle');
+          }
+          refreshRepel();
         }
       }, IDLE_DELAY);
     }
 
-    // Movimiento en cualquier parte de la pantalla: revela y rearma el timer
+    function armRevealTimer() {
+      clearTimeout(revealTimer);
+      revealTimer = setTimeout(() => {
+        if (!pointerOverUI && dock.classList.contains('show')) {
+          dock.classList.add('reveal-hidden');
+          refreshRepel();
+        }
+      }, REVEAL_DELAY);
+    }
+
+    // Movimiento en cualquier parte: revela y rearma timers.
     ['mousemove', 'pointermove'].forEach(evt => {
       window.addEventListener(evt, () => {
         reveal();
@@ -952,32 +1294,45 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
       }, { passive: true });
     });
 
-    // Touch: un tap también revela (útil en mobile, donde no hay "mousemove")
+    // Hover sobre el fondo (stage): oculta cards para ver el ASCII detras.
+    stage.addEventListener('mousemove', () => {
+      if (!pointerOverUI) armRevealTimer();
+    }, { passive: true });
+    stage.addEventListener('mouseleave', () => clearTimeout(revealTimer));
+
+    // Touch: un tap también revela.
     window.addEventListener('touchstart', () => {
       reveal();
       armIdleTimer();
     }, { passive: true });
 
-    // Mientras el puntero está sobre la card o el panel, no se desvanece
-    // aunque no haya movimiento — y al salir, se rearma el timer normal.
+    // Sobre la card o el panel: no hay fade ni reveal, scroll protegido.
     [card, panel].forEach(el => {
       if (!el) return;
       el.addEventListener('mouseenter', () => {
         pointerOverUI = true;
         clearTimeout(idleTimer);
+        clearTimeout(revealTimer);
         reveal();
+        refreshRepel();
       });
       el.addEventListener('mouseleave', () => {
         pointerOverUI = false;
+        wrap.classList.remove('halo-near');
         armIdleTimer();
+        refreshRepel();
       });
     });
 
-    // Arranque: los listeners quedan siempre activos. Es seguro llamarlos
-    // incluso antes de que el usuario presione play — la clase `.idle` no
-    // tiene ningún efecto visual mientras el dock/panel no tengan también
-    // `.show` (ver CSS: selector `#dock.show.idle`), así que no hay parpadeo
-    // ni fugas de estado si el timer corre en segundo plano desde el boot.
+    // Halo reactivo solido: proximidad al wrap, misma silueta rounded-rect.
+    window.addEventListener('mousemove', (e) => {
+      if (!panel.classList.contains('show')) return;
+      const b = wrap.getBoundingClientRect();
+      const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+      const d = Math.hypot(e.clientX - cx, e.clientY - cy);
+      wrap.classList.toggle('halo-near', d < 320);
+    }, { passive: true });
+
     armIdleTimer();
   }
 
