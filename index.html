@@ -660,15 +660,19 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
   // Margen de exclusion opaco (sin filtraciones) alrededor de cada card.
   const REPEL_MARGIN = 12;
   let repelRects = [];
-  // Título de bienvenida pre-play (D7): texto relleno que repela los glifos
-  // con el MISMO mecanismo que la UI, pero con margen ampliable (los
-  // "espacios" que hacen que el texto relleno se note). Estado:
-  // TITLE_MARGIN > REPEL_MARGIN, lineas centradas, la id siempre menor.
-  const TITLE_MARGIN = 22;            // halo de exclusion (el de la UI: 12)
+  // Título de bienvenida pre-play (D4): esculpido por sus propias letras.
+  // La máscara tipográfica (render offscreen de las dos líneas) define
+  // dónde NO puede haber glifo (tinta + margen estrecho TITLE_HARD) y el
+  // campo de distancia/dirección (chamfer) EMPUJA los glifos del halo
+  // (hasta TITLE_HALO) alejándolos de los bordes: el texto "talla" el
+  // campo ASCII en vez de recortarlo con un rectángulo tipo UI.
   const TITLE_TEXT = 'DouxSommeil';
   const TITLE_ID = '1550490712';
-  let titleRects = [];                // rects de exclusion (px CSS canvas)
-  let titleBox = null;                // layout cacheado: { w, h, lines }
+  const TITLE_HARD = 8;    // margen estrecho sin glifos alrededor de la tinta (px)
+  const TITLE_HALO = 20;   // halo despejado: nada de tinta ajena dentro (px)
+  const TITLE_CELL = 5;    // celda del grid de distancia (px)
+  let titleGrid = null;    // { gw, gh, ink, dist, dirX, dirY, inkCount }
+  let titleBox = null;     // layout cacheado: { w, h, lines }
   function pointInRoundedRect(px, py, r) {
     if (px < r.x || px > r.x + r.w || py < r.y || py > r.y + r.h) return 0;
     const rad = Math.min(r.r, r.w / 2, r.h / 2);
@@ -681,7 +685,8 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     const dx = px - cx, dy = py - cy;
     return (dx * dx + dy * dy <= rad * rad) ? 1 : 0;
   }
-  function pointInExclusion(px, py, r, m = REPEL_MARGIN) {
+  function pointInExclusion(px, py, r) {
+    const m = REPEL_MARGIN;
     const ex = r.x - m, ey = r.y - m, ew = r.w + m * 2, eh = r.h + m * 2;
     if (px < ex || px > ex + ew || py < ey || py > ey + eh) return 0;
     if (pointInRoundedRect(px, py, r)) return 1;
@@ -720,34 +725,113 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     } catch (e) { /* repulsion es decorativa, nunca rompe el render */ }
   }
 
-  // Layout del título de bienvenida: dos líneas centradas (la id SIEMPRE
-  // más pequeña) + sus rects de exclusión. Se rehace solo si cambia el
-  // tamaño del canvas; medición con la misma familia monoespaciada.
+  // Layout del título de bienvenida (D4): dos líneas centradas — el nombre
+  // en Cormorant Garamond itálica (ya cargada en la página) y la id
+  // SIEMPRE más pequeña en mono — renderizadas a un canvas offscreen para
+  // extraer la máscara de tinta. Sobre un grid grueso (TITLE_CELL px) se
+  // precalcula un campo de distancia/dirección hacia la tinta más cercana
+  // (chamfer de 2 pasadas): el bucle de glifos lo consulta en O(1) para
+  // excluir (tinta + margen estrecho) y empujar los glifos del halo hacia
+  // fuera. Se recalcula solo si cambia el tamaño o al resolverse
+  // document.fonts.ready (si Cormorant aún no cargó, la máscara quedaría
+  // medida con la fuente fallback).
   function layoutWelcomeTitle(w, h) {
+    titleBox = null; titleGrid = null;
     const fs = Math.round(Math.max(34, Math.min(w * 0.075, h * 0.16)));
     const fsId = Math.round(fs * 0.42); // la id siempre más pequeña
     const gap = Math.round(fs * 0.20);
     const y0 = Math.round(h * 0.16);    // por encima del gate centrado
-    const fam = "'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace";
-    const rects = [], lines = [];
+    const famTitle = "'Cormorant Garamond', Georgia, serif";
+    const famId = "'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace";
+    const lines = [];
     try {
-      ctx.save();
+      const off = document.createElement('canvas');
+      off.width = w; off.height = h;
+      const octx = off.getContext('2d', { willReadFrequently: true });
+      octx.textBaseline = 'top';
+      octx.fillStyle = '#fff';
+      const f1 = 'italic 500 ' + fs + 'px ' + famTitle;
+      octx.font = f1;
+      const w1 = octx.measureText(TITLE_TEXT).width;
+      const x1 = Math.round((w - w1) / 2);
+      octx.fillText(TITLE_TEXT, x1, y0);
+      lines.push({ font: f1, text: TITLE_TEXT, x: x1, y: y0 });
+      const y1 = y0 + Math.round(fs * 0.95) + gap;
+      const f2 = fsId + 'px ' + famId;
+      octx.font = f2;
+      const w2 = octx.measureText(TITLE_ID).width;
+      const x2 = Math.round((w - w2) / 2);
+      octx.fillText(TITLE_ID, x2, y1);
+      lines.push({ font: f2, text: TITLE_ID, x: x2, y: y1 });
+
+      // Máscara de tinta por celda del grid (celda = "ink" si algún píxel
+      // de la celda tiene alfa) + chamfer 2D: dist (en celdas) y vector
+      // unitario hacia la tinta más cercana (primer salto del camino).
+      const gw = Math.ceil(w / TITLE_CELL), gh = Math.ceil(h / TITLE_CELL);
+      const img = octx.getImageData(0, 0, w, h).data;
+      const ink = new Uint8Array(gw * gh);
+      let inkCount = 0;
+      for (let py = 0; py < h; py++) {
+        const rowBase = ((py / TITLE_CELL) | 0) * gw;
+        const rowOff = py * w;
+        for (let px = 0; px < w; px++) {
+          if (img[(rowOff + px) * 4 + 3] > 40) {
+            const gi = rowBase + ((px / TITLE_CELL) | 0);
+            if (!ink[gi]) { ink[gi] = 1; inkCount++; }
+          }
+        }
+      }
+      if (inkCount === 0) { // sin tinta medible: título sin repel
+        titleBox = { w: w, h: h, lines: lines };
+        return;
+      }
+      const INF = 1e9;
+      const dist = new Float64Array(gw * gh).fill(INF);
+      const dirX = new Float64Array(gw * gh);
+      const dirY = new Float64Array(gw * gh);
+      for (let i = 0; i < gw * gh; i++) if (ink[i]) dist[i] = 0;
+      // Chamfer de 2 pasadas: relax con vecinos cardinales (peso 1) y
+      // diagonales (peso √2); el vector guarda el salto hacia la tinta.
+      function relax(gx, gy, nbs) {
+        const i = gy * gw + gx;
+        if (dist[i] === 0) return;
+        for (let n = 0; n < nbs.length; n++) {
+          const nx = gx + nbs[n][0], ny = gy + nbs[n][1];
+          if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
+          const nd = dist[ny * gw + nx] + nbs[n][2];
+          if (nd < dist[i]) {
+            dist[i] = nd;
+            const inv = 1 / nbs[n][2];           // unitario: cardenal o diagonal
+            dirX[i] = nbs[n][0] * inv;
+            dirY[i] = nbs[n][1] * inv;
+          }
+        }
+      }
+      const fwd = [[-1, 0, 1], [0, -1, 1], [-1, -1, 1.4142], [1, -1, 1.4142]];
+      for (let gy = 0; gy < gh; gy++) {
+        for (let gx = 0; gx < gw; gx++) relax(gx, gy, fwd);
+      }
+      const bwd = [[1, 0, 1], [0, 1, 1], [1, 1, 1.4142], [-1, 1, 1.4142]];
+      for (let gy = gh - 1; gy >= 0; gy--) {
+        for (let gx = gw - 1; gx >= 0; gx--) relax(gx, gy, bwd);
+      }
+      titleGrid = { gw: gw, gh: gh, ink: ink, dist: dist,
+                    dirX: dirX, dirY: dirY, inkCount: inkCount };
+      titleBox = { w: w, h: h, lines: lines };
+    } catch (e) {
+      titleGrid = null; titleBox = null;
+    }
+  }
+
+  // Si Cormorant llega tarde, la máscara quedó medida con la fallback:
+  // al resolverse document.fonts la invalidamos para forzar el re-layout
+  // (solo pre-play; tras el gate el título ya no existe).
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => {
       try {
-        ctx.font = fs + 'px ' + fam;
-        const w1 = ctx.measureText(TITLE_TEXT).width;
-        const x1 = Math.round((w - w1) / 2);
-        rects.push({ x: x1, y: y0, w: w1, h: fs, r: 8 });
-        lines.push({ font: fs + 'px ' + fam, text: TITLE_TEXT, x: x1, y: y0 });
-        const y1 = y0 + Math.round(fs * 0.95) + gap;
-        ctx.font = fsId + 'px ' + fam;
-        const w2 = ctx.measureText(TITLE_ID).width;
-        const x2 = Math.round((w - w2) / 2);
-        rects.push({ x: x2, y: y1, w: w2, h: fsId, r: 6 });
-        lines.push({ font: fsId + 'px ' + fam, text: TITLE_ID, x: x2, y: y1 });
-      } finally { ctx.restore(); }
-    } catch (e) { titleRects = []; titleBox = null; return; }
-    titleRects = rects;
-    titleBox = { w: w, h: h, lines: lines };
+        if (!window.__FX || !window.__FX.welcomeDone) titleBox = null;
+      } catch (e) { /* decorativo */ }
+    }).catch(() => {});
   }
 
   let lastTime = 0;
@@ -860,35 +944,33 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, w, h);
 
-    // Color reactivo al bajo, resuelto UNA VEZ por frame (D4): reposo
-    // atenuado rgba(232,232,230,0.62) -> blanco puro con el sub-bass
-    // (base = lerp(resto, #fff, sub)) y, ENCIMA, el destello del kick
-    // hacia el siguiente color de la portada (D6: color = lerp(base,
-    // paleta[i], kick), caída ~300 ms, un color por bombo en ciclo de 4).
-    // Sin análisis (pre-gate, file:// o sin Web Audio): sub = kick = 0
-    // -> reposo estático.
+    // Velo de fondo del sub-bass (D3): el negro "respira" con el grave.
+    // Se pinta ANTES de los glifos: aclara el canvas entero (luminance
+    // puro, tono del reposo, "solo aclara independiente del color") sin
+    // lavar los caracteres. En reposo sub = 0 -> negro exacto. Sin
+    // análisis (pre-gate, file://): nada.
     const fx = window.__FX;
     const okFx = !!(fx && fx.ok);
     const sMix = okFx ? Math.min(1, fx.sub) : 0;
-    const kMix = okFx ? fx.kick : 0;
-    let cR = 232 + 23 * sMix, cG = 232 + 23 * sMix, cB = 230 + 25 * sMix;
-    if (kMix > 0 && fx.palIdx >= 0) {
-      const pc = fx.pal[fx.palIdx];
-      cR += (pc[0] - cR) * kMix;
-      cG += (pc[1] - cG) * kMix;
-      cB += (pc[2] - cB) * kMix;
+    if (sMix > 0.02) {
+      ctx.fillStyle = 'rgba(232,232,230,' + (sMix * 0.14).toFixed(3) + ')';
+      ctx.fillRect(0, 0, w, h);
     }
-    ctx.fillStyle = 'rgba(' + Math.round(cR) + ',' + Math.round(cG) + ',' +
-                    Math.round(cB) + ',' +
-                    (0.62 + 0.38 * Math.min(1, sMix + kMix)).toFixed(3) + ')';
 
-    // --- Título de bienvenida (solo pre-play, D7) ------------------------
-    // Dos líneas centradas en el color de reposo; sus rects excluyen los
-    // glifos con halo ampliable (TITLE_MARGIN). Vive hasta el primer play
-    // del gate (FX.welcomeDone) y no vuelve hasta recargar. Decorativo:
-    // va pintado en el canvas, así que jamás intercepta clics.
+    // Color reactivo de los glifos (D2): reposo atenuado
+    // rgba(232,232,230,0.62) -> blanco puro SOLO con el sub-bass (el kick
+    // ya no tiñe los glifos: su color vive en la ola que cubre el canvas).
+    // Sin análisis: sub = 0 -> reposo estático exacto.
+    const cR = 232 + 23 * sMix, cG = 232 + 23 * sMix, cB = 230 + 25 * sMix;
+    ctx.fillStyle = 'rgba(' + Math.round(cR) + ',' + Math.round(cG) + ',' +
+                    Math.round(cB) + ',' + (0.62 + 0.38 * sMix).toFixed(3) + ')';
+
+    // --- Título de bienvenida (solo pre-play, D4) ------------------------
+    // Máscara tipográfica + campo de empuje (layoutWelcomeTitle). Vive
+    // hasta el primer play del gate (FX.welcomeDone) y no vuelve hasta
+    // recargar. Decorativo: va pintado en el canvas, jamás intercepta.
     if (fx && fx.welcomeDone) {
-      if (titleRects.length) { titleRects = []; titleBox = null; }
+      if (titleGrid || titleBox) { titleGrid = null; titleBox = null; }
     } else if (!titleBox || titleBox.w !== w || titleBox.h !== h) {
       layoutWelcomeTitle(w, h);
     }
@@ -929,10 +1011,9 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
         // Fondo casi negro real -> espacio (mantiene el negro sólido)
         if (b < 14) continue;
 
-        // Repulsion dura con forma de card: dentro + margen = skip 100%, sin filtraciones.
-        // El título de bienvenida (pre-play) repela con el mismo test pero
-        // con halo ampliable (TITLE_MARGIN): los "espacios" del texto relleno.
-        if (repelRects.length || titleRects.length) {
+        // Repulsion dura con forma de card (UI: dock/panel): dentro +
+        // margen = skip 100%, sin filtraciones.
+        if (repelRects.length) {
           let excluded = false;
           for (let ri = 0; ri < repelRects.length && !excluded; ri++) {
             const r = repelRects[ri];
@@ -941,15 +1022,46 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
             if (px < r.x - m || px > r.x + r.w + m || py < r.y - m || py > r.y + r.h + m) continue;
             if (pointInExclusion(px, py, r)) excluded = true;
           }
-          if (!excluded && titleRects.length) {
-            for (let ti = 0; ti < titleRects.length; ti++) {
-              const r = titleRects[ti];
-              const m = TITLE_MARGIN;
-              if (px < r.x - m || px > r.x + r.w + m || py < r.y - m || py > r.y + r.h + m) continue;
-              if (pointInExclusion(px, py, r, m)) { excluded = true; break; }
-            }
-          }
           if (excluded) continue;
+        }
+
+        // Título pre-play (D4): la forma de las letras esculpe el campo.
+        // Tinta + margen estrecho (TITLE_HARD) -> skip; halo hasta
+        // TITLE_HALO -> empuje del vector del campo que saca el CUERPO
+        // completo del glifo del halo (el origen aterriza a halo+despeje:
+        // el carácter pinta hacia +x/+y desde su origen y con un empuje
+        // corto devolvería la tinta al halo). Resultado: halo contorno
+        // limpio y los glifos apiñándose justo fuera, como si la propia
+        // letra los repeliera. Si el destino cae en tinta
+        // (contraformas/concavidades) el glifo se descarta.
+        let glyphDx = 0, glyphDy = 0;
+        if (titleGrid) {
+          const gi = ((py / TITLE_CELL) | 0) * titleGrid.gw + ((px / TITLE_CELL) | 0);
+          const dpx = titleGrid.dist[gi] * TITLE_CELL;   // px a la tinta
+          if (dpx <= TITLE_HARD) continue;
+          // Empuje: saca el CUERPO del glifo del halo. El cuerpo pinta hacia
+          // +x/+y desde su origen, así que la zona de empuje se extiende
+          // hasta HALO + cuerpo (los orígenes cercanos, aunque estén fuera
+          // del halo, meterían la tinta del carácter dentro) y el despeje
+          // es DIRECCIONAL: en los empujes a 45° la esquina del cuerpo se
+          // acerca (|dx|+|dy| = √2) y necesita más margen que en cardinales.
+          const dB = Math.abs(titleGrid.dirX[gi]) + Math.abs(titleGrid.dirY[gi]);
+          const BE = Math.ceil(cellPx * 1.3 * dB);        // cuerpo del glifo
+          const need = (TITLE_HALO + BE) - dpx;
+          if (need > 0) {
+            const nx2 = px - titleGrid.dirX[gi] * need;
+            const ny2 = py - titleGrid.dirY[gi] * need;
+            // El destino puede caer cerca de OTRA letra (huecos entre
+            // letras): debe despejar el halo también allí, con la dirección
+            // local del propio destino — si no, se descarta el glifo.
+            const gj = ((ny2 / TITLE_CELL) | 0) * titleGrid.gw + ((nx2 / TITLE_CELL) | 0);
+            const dBd = Math.abs(titleGrid.dirX[gj]) + Math.abs(titleGrid.dirY[gj]);
+            const BEdest = Math.ceil(cellPx * 1.3 * dBd);
+            const gd = titleGrid.dist[gj] * TITLE_CELL;
+            if (gd < TITLE_HALO + BEdest) continue;
+            glyphDx = nx2 - px;
+            glyphDy = ny2 - py;
+          }
         }
 
         let idx = rampIndexForBrightness(b, gamma);
@@ -965,12 +1077,12 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
         const ch = RAMP[idx];
         if (ch === ' ') continue;
 
-        ctx.fillText(ch, px, py);
+        ctx.fillText(ch, px + glyphDx, py + glyphDy);
       }
     }
 
     // --- Título de bienvenida (solo pre-play; encima de los glifos) ------
-    if (titleBox && titleRects.length) {
+    if (titleBox && titleBox.lines.length) {
       ctx.save();
       try {
         const tLines = titleBox.lines;
@@ -1017,6 +1129,31 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
         }
       } catch (e) { /* onda decorativa: jamás rompe el render ni el play */ }
     }
+
+    // --- Ola de color por bombo (D2): cubre TODO el canvas y se va ------
+    // Disco del color actual del ciclo que nace en el centro y se expande
+    // hasta cubrir glifos y fondo en ~180 ms; su alpha sigue la envolvente
+    // del kick (τ≈300 ms: dura el bombo) limitada por el CAP 0.32 —color
+    // pleno sobre el fondo, lejos de estrobeo—. source-over: colorea
+    // proporcionalmente todo lo de debajo (glifos incluidos) y al irse
+    // deja el canvas como estaba. Sin kick (reduced-motion, file://, sin
+    // análisis) no se dibuja nada.
+    if (okFx && fx.kick > 0.01 && fx.palIdx >= 0) {
+      try {
+        const pc = fx.pal[fx.palIdx];
+        const grow = Math.min(1, (performance.now() - fx.washT0) / 180);
+        const washR = Math.hypot(w, h) * (0.06 + 0.94 * grow);
+        const grad = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, washR);
+        const col = pc[0] + ',' + pc[1] + ',' + pc[2];
+        grad.addColorStop(0, 'rgba(' + col + ',1)');
+        grad.addColorStop(0.82, 'rgba(' + col + ',1)');
+        grad.addColorStop(1, 'rgba(' + col + ',0)');
+        ctx.fillStyle = grad;
+        ctx.globalAlpha = Math.min(0.32, fx.kick * 0.32);
+        ctx.fillRect(0, 0, w, h);
+        ctx.globalAlpha = 1;
+      } catch (e) { /* la ola es decorativa: jamás rompe el frame */ }
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -1059,13 +1196,18 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     // Exponer para que el overlay refresque tras abrir/cerrar panel.
     window.__updateRepelRects = updateRepelRects;
     // Lectura de estado del título de bienvenida (solo verificación).
-    window.__welcomeState = () => ({
-      done: !!(window.__FX && window.__FX.welcomeDone),
-      n: titleRects.length,
-      m: TITLE_MARGIN,
-      rects: titleRects.map(r => ({ x: Math.round(r.x), y: Math.round(r.y),
-                                    w: Math.round(r.w), h: Math.round(r.h) }))
-    });
+    window.__welcomeState = () => {
+      const g = titleGrid;
+      return {
+        done: !!(window.__FX && window.__FX.welcomeDone),
+        n: g ? g.inkCount : 0,          // celdas de tinta de la máscara
+        lines: titleBox ? titleBox.lines.length : 0,
+        hard: TITLE_HARD, halo: TITLE_HALO, cell: TITLE_CELL,
+        fonts: titleBox ? titleBox.lines.map(l => l.font) : []
+      };
+    };
+    // Campo de distancia/tinta del título (solo verificación, lectura).
+    window.__titleField = () => titleGrid;
   }
 
   // ---------------------------------------------------------------------
@@ -1308,10 +1450,13 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     rawSub: 0, rawKick: 0,     // lecturas crudas (verificación/calibración)
     peak: 0.10, avgK: 0, lastKick: -1e9, kickArmed: true,
     kickHits: [],              // marcas de kick (cap 64, depuración)
-    // Paleta fija de la portada (D6): rosa, crema, topo, marrón. Un color
-    // por bombo, ciclo (i+1)%4; -1 = aún sin bombo (el primero pinta rosa).
-    pal: [[198, 149, 141], [234, 225, 202], [147, 136, 132], [61, 43, 37]],
+    // Paleta SATURADA de la portada (D1): salmón, rosa salmón, terracota
+    // y ladrillo — excluidos negro/blanco/gris (los neutrales de la
+    // paleta anterior eran imperceptibles). Un color por bombo, ciclo
+    // (i+1)%4; -1 = aún sin bombo (el primero pinta salmón).
+    pal: [[191, 112, 96], [191, 131, 120], [159, 76, 60], [128, 48, 32]],
     palIdx: -1,
+    washT0: 0,                 // arranque de la ola en curso (expansión ~180 ms)
     welcomeDone: false,        // título pre-play: se apaga en el 1er gate (D7)
     lastTs: 0, mql: null,
     rippleT0: null, rippleDone: false   // onda expansiva (única por sesión)
@@ -1401,12 +1546,14 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
           FX.kickArmed = false;
           FX.kickHits.push(Math.round(ts));
           if (FX.kickHits.length > 64) FX.kickHits.shift();
-          // Destello de portada (D6): cada bombo avanza el ciclo de 4
-          // colores y pinta un tinte instantáneo con caída ~300 ms.
-          // Amplitud acotada (0.70 < 1: tinte marcado pero nunca color
-          // pleno ni estrobeo); reduced-motion: sin destellos, el sub sigue.
+          // Ola de color de portada (D2): cada bombo avanza el ciclo de 4
+          // colores saturados y dispara una ola que cubre TODO el canvas,
+          // con caída ~300 ms (dura lo que dura el bombo). Amplitud 1.0 =
+          // drive de la ola; el alpha real lo limita el CAP del disco
+          // (0.32): color pleno sobre fondo, lejos de estrobeo.
+          // reduced-motion: sin ola, el sub-bass sigue aclarando.
           FX.palIdx = (FX.palIdx + 1) % FX.pal.length;
-          if (!FX.mql || !FX.mql.matches) FX.kick = 0.70;
+          if (!FX.mql || !FX.mql.matches) { FX.kick = 1.0; FX.washT0 = ts; }
         }
       } else if (k < FX.avgK) {
         FX.kickArmed = true;
