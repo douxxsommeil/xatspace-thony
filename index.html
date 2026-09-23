@@ -155,7 +155,11 @@
     pointer-events:none;
   }
   #dock.show{
-    opacity:1; transform:translateY(0); pointer-events:auto;
+    opacity:1; transform:translateY(0);
+    /* El dock (scrim incluido) NO captura clics: solo la card. Así la
+       franja inferior del panel (pl-bar, tracklist) es clicable aunque
+       la caja del dock la solape visualmente por z-index. */
+    pointer-events:none;
     visibility:visible;
     max-height:210px;
     padding-top:46px;
@@ -166,6 +170,7 @@
     background: linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0.42) 55%, rgba(0,0,0,0));
     transition: opacity .35s ease, transform .35s ease, max-height .35s ease, padding-top .35s ease, padding-bottom .35s ease, visibility 0s;
   }
+  #dock.show .card{ pointer-events:auto; }
   /* Auto-hide: una vez mostrado, si el mouse deja de moverse el dock se
      desvanece (transición más lenta, sensación de "asentarse"); al mover
      el mouse vuelve a aparecer casi al instante. */
@@ -298,8 +303,8 @@
     pointer-events:none;
   }
   #spotifyPanel.show{
-    padding-bottom: calc(154px + env(safe-area-inset-bottom, 0px));
-    max-height:calc(352px + 154px + 24px);
+    padding-bottom: calc(186px + env(safe-area-inset-bottom, 0px));
+    max-height:calc(352px + 186px + 24px);
     opacity:1;
     visibility:visible;
     transition: max-height .5s cubic-bezier(.22,.8,.32,1), opacity .4s ease, padding-bottom .5s ease, visibility 0s;
@@ -466,7 +471,7 @@
     .avatar-wrap{ width:38px; height:38px; }
     .name-glitch{ font-size:24px; }
     .quote-line{ font-size:12.5px; }
-    #spotifyPanel.show{ padding-bottom: calc(142px + env(safe-area-inset-bottom, 0px)); max-height:calc(300px + 142px + 24px); }
+    #spotifyPanel.show{ padding-bottom: calc(170px + env(safe-area-inset-bottom, 0px)); max-height:calc(300px + 170px + 24px); }
     .spotify-frame-wrap{ height:300px; }
     #spotifyPanel.compact .spotify-frame-wrap{ height:140px; }
     #spotifyPanel.compact .spotify-frame-wrap:hover,
@@ -670,6 +675,7 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
   const TITLE_CELL = 5;    // celda del grid de distancia (px)
   let titleGrid = null;    // { gw, gh, ink, dist, dirX, dirY, inkCount }
   let titleBox = null;     // layout cacheado: { w, h, lines }
+  let titleRevealT0 = -1e9; // auto-revelado del vacío (instantáneo si -1e9)
   function pointInRoundedRect(px, py, r) {
     if (px < r.x || px > r.x + r.w || py < r.y || py > r.y + r.h) return 0;
     const rad = Math.min(r.r, r.w / 2, r.h / 2);
@@ -815,6 +821,13 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
       titleGrid = { gw: gw, gh: gh, ink: ink, dist: dist,
                     dirX: dirX, dirY: dirY, inkCount: inkCount };
       titleBox = { w: w, h: h, lines: lines };
+      // Auto-revelado (D4): el vacío abre L->R en ~1.5 s; bajo
+      // reduced-motion aparece ya revelado (t0 muy negativo).
+      try {
+        titleRevealT0 = (window.matchMedia &&
+          window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+          ? -1e9 : performance.now();
+      } catch (e) { titleRevealT0 = performance.now(); }
     } catch (e) {
       titleGrid = null; titleBox = null;
     }
@@ -954,13 +967,15 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
       ctx.fillRect(0, 0, w, h);
     }
 
-    // Color reactivo de los glifos (D2): reposo atenuado
-    // rgba(232,232,230,0.62) -> blanco puro SOLO con el sub-bass (el kick
-    // ya no tiñe los glifos: su color vive en la ola que cubre el canvas).
+    // Color reactivo de los glifos: reposo atenuado rgba(232,232,230,0.62)
+    // -> blanco puro SOLO con el sub-bass. Es el estilo BASE del campo; la
+    // onda del bombo (D2) pinta por-glifo en la cresta, encima de esto.
     // Sin análisis: sub = 0 -> reposo estático exacto.
     const cR = 232 + 23 * sMix, cG = 232 + 23 * sMix, cB = 230 + 25 * sMix;
-    ctx.fillStyle = 'rgba(' + Math.round(cR) + ',' + Math.round(cG) + ',' +
-                    Math.round(cB) + ',' + (0.62 + 0.38 * sMix).toFixed(3) + ')';
+    const baseA = 0.62 + 0.38 * sMix;
+    const baseFill = 'rgba(' + Math.round(cR) + ',' + Math.round(cG) + ',' +
+                     Math.round(cB) + ',' + baseA.toFixed(3) + ')';
+    ctx.fillStyle = baseFill;
 
     // --- Título de bienvenida (solo pre-play, D4) ------------------------
     // Máscara tipográfica + campo de empuje (layoutWelcomeTitle). Vive
@@ -993,6 +1008,32 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     const flicker = state.flickerProb;
     const gamma = state.gamma;
 
+    // --- Onda por bombo (D2): precompute por frame ------------------------
+    // Poda las muertas (vida <= 1.2 s) y deja radio/decaimiento listos; el
+    // bucle pinta color/alfa/chars solo en la cresta. Fast-path: sin
+    // ondas, coste cero.
+    const nowMs = performance.now();
+    let fxWaves = null;
+    if (okFx && fx.waves && fx.waves.length) {
+      for (let wi = fx.waves.length - 1; wi >= 0; wi--) {
+        if (nowMs - fx.waves[wi].t0 > 1200) fx.waves.splice(wi, 1);
+      }
+      if (fx.waves.length) {
+        fxWaves = fx.waves;
+        for (let wi = 0; wi < fxWaves.length; wi++) {
+          fxWaves[wi]._R = 1.4 * (nowMs - fxWaves[wi].t0);   // 1400 px/s
+          fxWaves[wi]._f = Math.exp(-(nowMs - fxWaves[wi].t0) / 650);
+        }
+      }
+    }
+    const wcx = w / 2, wcy = h / 2;
+    // Auto-revelado del vacío (D4): la exclusión/empuje abre de izquierda
+    // a derecha tras construir la máscara (~1.5 s); reduced-motion =>
+    // titleRevealT0 muy negativo = instantáneo.
+    const revealX = titleGrid
+      ? w * Math.min(1, Math.max(0, (nowMs - titleRevealT0) / 1500))
+      : null;
+
     for (let cy = startRow; cy < endRow; cy++) {
       const gy = Math.min(gridH - 1, Math.max(0, Math.floor(cy * step)));
       const py = offY + cy * cellPx;
@@ -1022,42 +1063,39 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
           if (excluded) continue;
         }
 
-        // Título pre-play (D4): la forma de las letras esculpe el campo.
-        // Tinta + margen estrecho (TITLE_HARD) -> skip; halo hasta
-        // TITLE_HALO -> empuje del vector del campo que saca el CUERPO
-        // completo del glifo del halo (el origen aterriza a halo+despeje:
-        // el carácter pinta hacia +x/+y desde su origen y con un empuje
-        // corto devolvería la tinta al halo). Resultado: halo contorno
-        // limpio y los glifos apiñándose justo fuera, como si la propia
-        // letra los repeliera. Si el destino cae en tinta
-        // (contraformas/concavidades) el glifo se descarta.
+        // Título pre-play (D4): espacio negativo — la forma de las letras
+        // es el hueco que dejan los glifos excluidos. Dentro (d <= HARD)
+        // -> skip; en el halo -> empuje del vector que saca el CUERPO del
+        // glifo (origen a halo+despeje, direccional); destino cerca de
+        // otra letra -> descart. El auto-revelado (D4) abre el vacío L->R
+        // con borde suave: factor rvf (dither temporal en la franja).
         let glyphDx = 0, glyphDy = 0;
         if (titleGrid) {
-          const gi = ((py / TITLE_CELL) | 0) * titleGrid.gw + ((px / TITLE_CELL) | 0);
-          const dpx = titleGrid.dist[gi] * TITLE_CELL;   // px a la tinta
-          if (dpx <= TITLE_HARD) continue;
-          // Empuje: saca el CUERPO del glifo del halo. El cuerpo pinta hacia
-          // +x/+y desde su origen, así que la zona de empuje se extiende
-          // hasta HALO + cuerpo (los orígenes cercanos, aunque estén fuera
-          // del halo, meterían la tinta del carácter dentro) y el despeje
-          // es DIRECCIONAL: en los empujes a 45° la esquina del cuerpo se
-          // acerca (|dx|+|dy| = √2) y necesita más margen que en cardinales.
-          const dB = Math.abs(titleGrid.dirX[gi]) + Math.abs(titleGrid.dirY[gi]);
-          const BE = Math.ceil(cellPx * 1.3 * dB);        // cuerpo del glifo
-          const need = (TITLE_HALO + BE) - dpx;
-          if (need > 0) {
-            const nx2 = px - titleGrid.dirX[gi] * need;
-            const ny2 = py - titleGrid.dirY[gi] * need;
-            // El destino puede caer cerca de OTRA letra (huecos entre
-            // letras): debe despejar el halo también allí, con la dirección
-            // local del propio destino — si no, se descarta el glifo.
-            const gj = ((ny2 / TITLE_CELL) | 0) * titleGrid.gw + ((nx2 / TITLE_CELL) | 0);
-            const dBd = Math.abs(titleGrid.dirX[gj]) + Math.abs(titleGrid.dirY[gj]);
-            const BEdest = Math.ceil(cellPx * 1.3 * dBd);
-            const gd = titleGrid.dist[gj] * TITLE_CELL;
-            if (gd < TITLE_HALO + BEdest) continue;
-            glyphDx = nx2 - px;
-            glyphDy = ny2 - py;
+          let rvf = 1;
+          if (revealX !== null) {
+            rvf = (revealX + 40 - px) / 40;      // franja suave de 40 px
+            if (rvf < 0) rvf = 0; else if (rvf > 1) rvf = 1;
+          }
+          if (rvf > 0 && (rvf >= 1 || xorshift() < rvf)) {
+            const gi = ((py / TITLE_CELL) | 0) * titleGrid.gw + ((px / TITLE_CELL) | 0);
+            const dpx = titleGrid.dist[gi] * TITLE_CELL;   // px a la forma
+            if (dpx <= TITLE_HARD) continue;
+            const dB = Math.abs(titleGrid.dirX[gi]) + Math.abs(titleGrid.dirY[gi]);
+            const BE = Math.ceil(cellPx * 1.3 * dB);        // cuerpo del glifo
+            const need = (TITLE_HALO + BE) - dpx;
+            if (need > 0) {
+              const nx2 = px - titleGrid.dirX[gi] * need;
+              const ny2 = py - titleGrid.dirY[gi] * need;
+              // El destino puede caer cerca de OTRA letra (huecos entre
+              // letras): debe despejar el halo también allí — si no, fuera.
+              const gj = ((ny2 / TITLE_CELL) | 0) * titleGrid.gw + ((nx2 / TITLE_CELL) | 0);
+              const dBd = Math.abs(titleGrid.dirX[gj]) + Math.abs(titleGrid.dirY[gj]);
+              const BEdest = Math.ceil(cellPx * 1.3 * dBd);
+              const gd = titleGrid.dist[gj] * TITLE_CELL;
+              if (gd < TITLE_HALO + BEdest) continue;
+              glyphDx = (nx2 - px) * rvf;
+              glyphDy = (ny2 - py) * rvf;
+            }
           }
         }
 
@@ -1071,23 +1109,46 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
           idx = Math.min(RAMP_LEN - 1, Math.max(1, idx + jitter));
         }
 
+        // Onda por bombo (D2): intensidad de cresta en esta celda (cresta
+        // ~35 px + cola de afterglow tras el frente, decaimiento global).
+        let waveI = 0, waveIdx = -1;
+        if (fxWaves) {
+          const dxw = px - wcx, dyw = py - wcy;
+          const dC = Math.sqrt(dxw * dxw + dyw * dyw);
+          for (let wi = 0; wi < fxWaves.length; wi++) {
+            const ww = fxWaves[wi];
+            const band = Math.abs(dC - ww._R);
+            let I;
+            if (band <= 35) I = 1 - band / 35;
+            else if (dC < ww._R - 35) I = 0.35 * Math.exp(-(ww._R - dC - 35) / 280);
+            else I = 0;
+            I *= ww._f;
+            if (I > waveI) { waveI = I; waveIdx = ww.idx; }
+          }
+        }
+        if (waveI > 0.03) {
+          // La cresta salta a caracteres más densos: es lo que hace que
+          // la onda se lea como visualizador, no como simple tinte.
+          idx = Math.min(RAMP_LEN - 1, idx + Math.floor(waveI * 3));
+        }
+
         const ch = RAMP[idx];
         if (ch === ' ') continue;
 
-        ctx.fillText(ch, px + glyphDx, py + glyphDy);
-      }
-    }
-
-    // --- Título de bienvenida (solo pre-play; encima de los glifos) ------
-    if (titleBox && titleBox.lines.length) {
-      ctx.save();
-      try {
-        const tLines = titleBox.lines;
-        for (let li = 0; li < tLines.length; li++) {
-          ctx.font = tLines[li].font;
-          ctx.fillText(tLines[li].text, tLines[li].x, tLines[li].y);
+        if (waveI > 0.03) {
+          // Glifo de cresta: color de portada del ciclo + brillo (alfa).
+          const pc = fx.pal[waveIdx];
+          const mix = Math.min(1, waveI * 1.4);
+          ctx.fillStyle = 'rgba(' + Math.round(cR + (pc[0] - cR) * mix) + ',' +
+                          Math.round(cG + (pc[1] - cG) * mix) + ',' +
+                          Math.round(cB + (pc[2] - cB) * mix) + ',' +
+                          Math.min(1, baseA + waveI * 0.35).toFixed(3) + ')';
+          ctx.fillText(ch, px + glyphDx, py + glyphDy);
+          ctx.fillStyle = baseFill;
+        } else {
+          ctx.fillText(ch, px + glyphDx, py + glyphDy);
         }
-      } finally { ctx.restore(); }
+      }
     }
 
     // --- Onda expansiva única (solo gate; decorativa) -------------------
@@ -1125,31 +1186,6 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
           }
         }
       } catch (e) { /* onda decorativa: jamás rompe el render ni el play */ }
-    }
-
-    // --- Ola de color por bombo (D2): cubre TODO el canvas y se va ------
-    // Disco del color actual del ciclo que nace en el centro y se expande
-    // hasta cubrir glifos y fondo en ~180 ms; su alpha sigue la envolvente
-    // del kick (τ≈300 ms: dura el bombo) limitada por el CAP 0.32 —color
-    // pleno sobre el fondo, lejos de estrobeo—. source-over: colorea
-    // proporcionalmente todo lo de debajo (glifos incluidos) y al irse
-    // deja el canvas como estaba. Sin kick (reduced-motion, file://, sin
-    // análisis) no se dibuja nada.
-    if (okFx && fx.kick > 0.01 && fx.palIdx >= 0) {
-      try {
-        const pc = fx.pal[fx.palIdx];
-        const grow = Math.min(1, (performance.now() - fx.washT0) / 180);
-        const washR = Math.hypot(w, h) * (0.06 + 0.94 * grow);
-        const grad = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, washR);
-        const col = pc[0] + ',' + pc[1] + ',' + pc[2];
-        grad.addColorStop(0, 'rgba(' + col + ',1)');
-        grad.addColorStop(0.82, 'rgba(' + col + ',1)');
-        grad.addColorStop(1, 'rgba(' + col + ',0)');
-        ctx.fillStyle = grad;
-        ctx.globalAlpha = Math.min(0.32, fx.kick * 0.32);
-        ctx.fillRect(0, 0, w, h);
-        ctx.globalAlpha = 1;
-      } catch (e) { /* la ola es decorativa: jamás rompe el frame */ }
     }
   }
 
@@ -1200,6 +1236,7 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
         n: g ? g.inkCount : 0,          // celdas de tinta de la máscara
         lines: titleBox ? titleBox.lines.length : 0,
         hard: TITLE_HARD, halo: TITLE_HALO, cell: TITLE_CELL,
+        revealT0: titleRevealT0,
         fonts: titleBox ? titleBox.lines.map(l => l.font) : []
       };
     };
@@ -1453,7 +1490,7 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     // (i+1)%4; -1 = aún sin bombo (el primero pinta salmón).
     pal: [[191, 112, 96], [191, 131, 120], [159, 76, 60], [128, 48, 32]],
     palIdx: -1,
-    washT0: 0,                 // arranque de la ola en curso (expansión ~180 ms)
+    waves: [],                 // ondas vivas por bombo (cap 3, {t0, idx})
     welcomeDone: false,        // título pre-play: se apaga en el 1er gate (D7)
     lastTs: 0, mql: null,
     rippleT0: null, rippleDone: false   // onda expansiva (única por sesión)
@@ -1543,14 +1580,18 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
           FX.kickArmed = false;
           FX.kickHits.push(Math.round(ts));
           if (FX.kickHits.length > 64) FX.kickHits.shift();
-          // Ola de color de portada (D2): cada bombo avanza el ciclo de 4
-          // colores saturados y dispara una ola que cubre TODO el canvas,
-          // con caída ~300 ms (dura lo que dura el bombo). Amplitud 1.0 =
-          // drive de la ola; el alpha real lo limita el CAP del disco
-          // (0.32): color pleno sobre fondo, lejos de estrobeo.
-          // reduced-motion: sin ola, el sub-bass sigue aclarando.
+          // Onda por bombo (D2): cada bombo avanza el ciclo de 4 colores
+          // saturados y apila un frente circular que CRUZA el campo de
+          // glifos (nace en el centro, ~1400 px/s, vida <= 1.2 s). El disco
+          // full-canvas de la iteración anterior se descartó: un tinte
+          // uniforme es invisible para el ojo. FX.kick queda como pulso del
+          // detector (sanidad/verificación); reduced-motion: sin onda.
           FX.palIdx = (FX.palIdx + 1) % FX.pal.length;
-          if (!FX.mql || !FX.mql.matches) { FX.kick = 1.0; FX.washT0 = ts; }
+          if (!FX.mql || !FX.mql.matches) {
+            FX.kick = 1.0;
+            FX.waves.push({ t0: ts, idx: FX.palIdx });
+            if (FX.waves.length > 3) FX.waves.shift();
+          }
         }
       } else if (k < FX.avgK) {
         FX.kickArmed = true;
