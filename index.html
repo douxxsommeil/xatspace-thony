@@ -3,7 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Thony</title>
+<title>DouxSommeil | Xatspace</title>
+<script>
+  /* Titulo segun idioma del navegador: es -> "DouxSommeil | perfil-xat", resto -> "DouxSommeil | Xatspace" */
+  (function () {
+    var lang = (navigator.languages && navigator.languages[0]) || navigator.language || '';
+    if (/^es\b/i.test(lang)) document.title = 'DouxSommeil | perfil-xat';
+  })();
+</script>
 <link rel="icon" href="assets/cover.jpg" type="image/jpeg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -392,7 +399,19 @@
     list-style:none;
     overflow-y:auto;
     -webkit-overflow-scrolling:touch;
+    scrollbar-width:thin;
+    scrollbar-color:rgba(232,232,230,0.16) transparent;
   }
+  /* Scrollbar minimalista (solo tracklist): thumb fino translucido, track invisible */
+  .pl-list::-webkit-scrollbar{ width:5px; }
+  .pl-list::-webkit-scrollbar-track{ background:transparent; }
+  .pl-list::-webkit-scrollbar-thumb{
+    background:rgba(232,232,230,0.16);
+    border-radius:999px;
+    border:1px solid transparent;
+    background-clip:padding-box;
+  }
+  .pl-list::-webkit-scrollbar-thumb:hover{ background:rgba(232,232,230,0.30); background-clip:padding-box; }
   .pl-list li{
     display:flex; align-items:center; gap:10px;
     padding:6px 8px; border-radius:8px;
@@ -488,7 +507,7 @@
 <div id="flash" aria-hidden="true"></div>
 
 <div id="nowPlaying" role="status" aria-live="polite">
-  <img id="npCover" alt="Caratula del album" crossorigin="anonymous">
+  <img id="npCover" alt="Caratula del album">
   <div>
     <div class="np-sub">AHORA SE ESTA REPRODUCIENDO</div>
     <div class="np-title" id="npTitle"></div>
