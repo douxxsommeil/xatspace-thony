@@ -99,20 +99,42 @@
     transform-origin: 48px 48px;
   }
   .play-ring--track{
-    opacity:.7;
+    /* El aro base se acerca y aclara con la proximidad del puntero
+       (--play-pull, 0..1, escrito por JS en .play-wrap). */
+    opacity: calc(.55 + .3 * var(--play-pull, 0));
+    transition: opacity .38s ease;
   }
-  /* Anillo que respira (editorial): sin scan giratorio — un pulso lento
-     de opacidad/escala, el mismo lenguaje quieto del resto de la UI. */
+  /* Botón vivo (gate-start): el arco hairline ORBITA el anillo girando el
+     SVG (transform: el dash no se deforma ni se estira) y la respiración
+     del aro vive SOLO en opacidad — nada de escala sobre el arco, que se
+     leía como glitch. Con el puntero cerca, --play-rot suma el ángulo
+     hacia el cursor y --play-pull el acercamiento: transform/opacity
+     únicamente (compositor-friendly, sin filtros). */
   .play-ring--scan{
-    animation: ringBreathe 3.6s ease-in-out infinite;
+    animation: ringOrbit 6.5s linear infinite,
+               ringBreathe 3.6s ease-in-out infinite;
     transform-origin: 48px 48px;
+    rotate: var(--play-rot, 0deg);
+    scale: calc(1 + 0.05 * var(--play-pull, 0));
+    transition: rotate .38s ease, scale .38s ease;
+  }
+  @keyframes ringOrbit{
+    to{ transform: rotate(360deg); }
   }
   @keyframes ringBreathe{
-    0%, 100%{ opacity:.5; transform: scale(1); }
-    50%{ opacity:.95; transform: scale(1.05); }
+    0%, 100%{ opacity:.65; }
+    50%{ opacity:.95; }
+  }
+  /* Hover y foco: la órbita se detiene en su ángulo y el brillo se
+     remata (--play-pull al máximo). */
+  #playBtn:hover .play-ring--scan,
+  #playBtn:focus-visible .play-ring--scan{
+    animation-play-state: paused;
+    --play-pull: 1;
   }
   @media (prefers-reduced-motion: reduce){
-    .play-ring--scan{ animation:none; opacity:.8; }
+    /* Estático: sin órbita, sin escala y sin rotación; solo brillo. */
+    .play-ring--scan{ animation:none; opacity:.8; rotate:0deg; scale:1; }
   }
 
   .play-icon{
@@ -149,7 +171,6 @@
     border-color: rgba(232,232,230,0.38);
     width:62px; height:62px;
   }
-  #playBtn:hover .play-ring--scan{ animation-duration: 1.8s; }
   #playBtn:hover .play-icon{ transform: scale(1.08); }
   .play-wrap:hover .play-word{ color:var(--ink); }
   .play-wrap:hover .play-hint{ color:var(--ink-dim); }
@@ -645,6 +666,20 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
   // Ordenada de menor a mayor densidad visual percibida.
   const RAMP = ' .`\'",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$';
   const RAMP_LEN = RAMP.length;
+  // Onda de bombo (D2/D3/D4): la cresta se ensancha, gana un filamento
+  // interior y brilla POR ENCIMA del glifo (el color de portada es más
+  // oscuro que el glifo: mezclar hacia él lo apagaba). Conviviendo con
+  // el sub-bass, la cresta sigue siendo lo más brillante del frame.
+  const WAVE_FILAMENT = 12;  // px: filamento caliente en la punta del frente
+  const WAVE_CREST = 48;     // px: semiancho del cuerpo de color
+  const WAVE_TAIL = 0.26;    // cola maxima tras el cuerpo (tenue: el frente
+                              // debe ser el pico, no la estela)
+  const WAVE_TAIL_DECAY = 150; // px: caida de la cola
+  const WAVE_TAIL_REACH = 220; // px: la cola NO pasa de aquí (si no, el frente
+                               // se convierte en un tinte global del canvas)
+  const WAVE_TAU = 900;      // ms: decaimiento global (antes 650)
+  const WAVE_LIFE = 1400;    // ms: vida maxima de la onda (antes 1200)
+  const WAVE_MIN_IDX = Math.floor(RAMP_LEN * 0.8); // salto minimo de densidad
 
   // Caracteres "candidatos" para el efecto de parpadeo: se restringe a los
   // que están en una densidad similar para no romper la silueta.
@@ -694,9 +729,20 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
   const TITLE_HARD = 8;    // margen estrecho sin glifos alrededor de la tinta (px)
   const TITLE_HALO = 20;   // halo despejado: nada de tinta ajena dentro (px)
   const TITLE_CELL = 5;    // celda del grid de distancia (px)
+  // Relleno de dos capas dentro de la forma (D5/D6): tinta gris plana +
+  // contraluz más claro desplazado (registro desalineado tipo imprenta).
+  // Guardarraíl D6: compuestos sobre negro quedan por DEBAJO de 75 de
+  // luminancia — muy por debajo del glifo (144/232) — así que nunca hay
+  // borde luminoso ni halo: la palabra sigue siendo una anomalía oscura.
+  const TITLE_FILL_BASE = [64, 64, 68, 0.95];    // ~61 compuesto
+  const TITLE_FILL_LIGHT = [176, 176, 180, 0.38]; // ~67 compuesto
+  const TITLE_FILL_DX = 2, TITLE_FILL_DY = 2;
   let titleGrid = null;    // { gw, gh, ink, dist, dirX, dirY, inkCount }
   let titleBox = null;     // layout cacheado: { w, h, lines }
   let titleRevealT0 = -1e9; // auto-revelado del vacío (instantáneo si -1e9)
+  let titleInkLayer = null;   // canvas con la máscara tintada (gris base)
+  let titleLightLayer = null; // canvas con la máscara tintada clara + offset
+  let titleMixLayer = null;   // composite del revelado (solo mientras abre)
   function pointInRoundedRect(px, py, r) {
     if (px < r.x || px > r.x + r.w || py < r.y || py > r.y + r.h) return 0;
     const rad = Math.min(r.r, r.w / 2, r.h / 2);
@@ -767,8 +813,28 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
   // fuera. Se recalcula solo si cambia el tamaño o al resolverse
   // document.fonts.ready (si Cormorant aún no cargó, la máscara quedaría
   // medida con la fuente fallback).
+  // Tinte plano de la máscara de tinta (D5): se copia la máscara, se
+  // rellena con source-in del color plano y, si se pide, se devuelve
+  // desplazada (la capa clara queda "desregistrada" sobre la base).
+  // Sin gradiente, sombra ni glow: dos niveles de gris y nada más.
+  function tintMask(src, rgba, dx, dy) {
+    const t = document.createElement('canvas');
+    t.width = src.width; t.height = src.height;
+    const tg = t.getContext('2d');
+    tg.drawImage(src, 0, 0);
+    tg.globalCompositeOperation = 'source-in';
+    tg.fillStyle = 'rgba(' + rgba[0] + ',' + rgba[1] + ',' + rgba[2] +
+                   ',' + rgba[3] + ')';
+    tg.fillRect(0, 0, t.width, t.height);
+    if (!dx && !dy) return t;
+    const c = document.createElement('canvas');
+    c.width = src.width; c.height = src.height;
+    c.getContext('2d').drawImage(t, dx, dy);
+    return c;
+  }
+
   function layoutWelcomeTitle(w, h) {
-    titleBox = null; titleGrid = null;
+    titleBox = null; titleGrid = null; titleInkLayer = null; titleLightLayer = null;
     const fs = Math.round(Math.max(34, Math.min(w * 0.075, h * 0.16)));
     const fsId = Math.round(fs * 0.42); // la id siempre más pequeña
     const gap = Math.round(fs * 0.20);
@@ -850,6 +916,15 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
       titleGrid = { gw: gw, gh: gh, ink: ink, dist: dist,
                     dirX: dirX, dirY: dirY, inkCount: inkCount };
       titleBox = { w: w, h: h, lines: lines };
+      // Relleno de dos capas (D5): la forma del título deja de ser un
+      // hueco mudo y se lee como tipografía — tinta gris plana con un
+      // contraluz más claro desplazado. Se pinta una vez aquí; por frame
+      // solo son dos drawImage (con el revelado mientras abre).
+      titleLightLayer = tintMask(off, TITLE_FILL_LIGHT,
+                                 TITLE_FILL_DX, TITLE_FILL_DY);
+      titleInkLayer = tintMask(off, TITLE_FILL_BASE, 0, 0);
+      titleMixLayer = document.createElement('canvas');
+      titleMixLayer.width = w; titleMixLayer.height = h;
       // Auto-revelado (D4): el vacío abre L->R en ~1.5 s; bajo
       // reduced-motion aparece ya revelado (t0 muy negativo).
       try {
@@ -1045,13 +1120,13 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     let fxWaves = null;
     if (okFx && fx.waves && fx.waves.length) {
       for (let wi = fx.waves.length - 1; wi >= 0; wi--) {
-        if (nowMs - fx.waves[wi].t0 > 1200) fx.waves.splice(wi, 1);
+        if (nowMs - fx.waves[wi].t0 > WAVE_LIFE) fx.waves.splice(wi, 1);
       }
       if (fx.waves.length) {
         fxWaves = fx.waves;
         for (let wi = 0; wi < fxWaves.length; wi++) {
           fxWaves[wi]._R = 1.4 * (nowMs - fxWaves[wi].t0);   // 1400 px/s
-          fxWaves[wi]._f = Math.exp(-(nowMs - fxWaves[wi].t0) / 650);
+          fxWaves[wi]._f = Math.exp(-(nowMs - fxWaves[wi].t0) / WAVE_TAU);
         }
       }
     }
@@ -1138,9 +1213,11 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
           idx = Math.min(RAMP_LEN - 1, Math.max(1, idx + jitter));
         }
 
-        // Onda por bombo (D2): intensidad de cresta en esta celda (cresta
-        // ~35 px + cola de afterglow tras el frente, decaimiento global).
-        let waveI = 0, waveIdx = -1;
+        // Onda por bombo (D3): perfil de cresta con filamento interior.
+        // I = 1 en la punta -> 0.65 al final del filamento -> 0 en el
+        // borde del cuerpo; detrás, cola exponencial suave. El decaimiento
+        // global vive en ww._f (WAVE_TAU).
+        let waveI = 0, waveIdx = -1, waveHot = 0;
         if (fxWaves) {
           const dxw = px - wcx, dyw = py - wcy;
           const dC = Math.sqrt(dxw * dxw + dyw * dyw);
@@ -1148,35 +1225,84 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
             const ww = fxWaves[wi];
             const band = Math.abs(dC - ww._R);
             let I;
-            if (band <= 35) I = 1 - band / 35;
-            else if (dC < ww._R - 35) I = 0.35 * Math.exp(-(ww._R - dC - 35) / 280);
+            if (band <= WAVE_FILAMENT) I = 1 - 0.35 * (band / WAVE_FILAMENT);
+            else if (band <= WAVE_CREST) I = 0.65 * (1 - (band - WAVE_FILAMENT) / (WAVE_CREST - WAVE_FILAMENT));
+            else if (dC < ww._R - WAVE_CREST) {
+              const dt = ww._R - dC - WAVE_CREST;
+              I = dt < WAVE_TAIL_REACH
+                  ? WAVE_TAIL * Math.exp(-dt / WAVE_TAIL_DECAY)
+                  : 0;   // cola acotada: más allá, el frente deja de ser anillo
+            }
             else I = 0;
             I *= ww._f;
-            if (I > waveI) { waveI = I; waveIdx = ww.idx; }
+            if (I > waveI) { waveI = I; waveIdx = ww.idx; waveHot = band <= WAVE_FILAMENT ? 1 : 0; }
           }
         }
-        if (waveI > 0.03) {
-          // La cresta salta a caracteres más densos: es lo que hace que
-          // la onda se lea como visualizador, no como simple tinte.
-          idx = Math.min(RAMP_LEN - 1, idx + Math.floor(waveI * 3));
+        if (waveI > 0.04) {
+          // D4: la cresta salta a caracteres visiblemente más densos — un
+          // mínimo de cresta además del bump por intensidad (con I media
+          // el bump solo daba +0/+1 y no se notaba).
+          idx = Math.min(RAMP_LEN - 1,
+                         Math.max(idx + Math.floor(waveI * 3), WAVE_MIN_IDX));
         }
 
         const ch = RAMP[idx];
         if (ch === ' ') continue;
 
-        if (waveI > 0.03) {
-          // Glifo de cresta: color de portada del ciclo + brillo (alfa).
+        if (waveI > 0.04) {
+          // Dominio perceptual medible (D3): la cresta debe pesar MÁS que
+          // el campo. Con el campo atenuado (alfa 0.62) gana por
+          // luminancia; con el campo en blanco por sub-bass —255 es el
+          // techo, ningún tinte puede brillar más— gana por MASA de tinta
+          // (caracteres al 80% de densidad + doble trazo en el filamento)
+          // y CROMA. Por eso el tono se aclara bastante: una cresta a
+          // color pleno sobre blanco sería MÁS OSCURA que el campo.
           const pc = fx.pal[waveIdx];
-          const mix = Math.min(1, waveI * 1.4);
-          ctx.fillStyle = 'rgba(' + Math.round(cR + (pc[0] - cR) * mix) + ',' +
-                          Math.round(cG + (pc[1] - cG) * mix) + ',' +
-                          Math.round(cB + (pc[2] - cB) * mix) + ',' +
-                          Math.min(1, baseA + waveI * 0.35).toFixed(3) + ')';
+          // Cuerpo: color de portada marcado (croma). Filamento: casi blanco
+          // (pico de luminancia). Así la cresta gana en los dos canales.
+          const lf = waveHot ? 0.72 + 0.18 * Math.min(1, waveI)
+                             : 0.28 + 0.22 * Math.min(1, waveI);
+          const mix = Math.min(1, waveI * 2.0);
+          const tr = pc[0] + (252 - pc[0]) * lf;
+          const tgc = pc[1] + (252 - pc[1]) * lf;
+          const tb = pc[2] + (252 - pc[2]) * lf;
+          ctx.fillStyle = 'rgba(' + Math.round(cR + (tr - cR) * mix) + ',' +
+                          Math.round(cG + (tgc - cG) * mix) + ',' +
+                          Math.round(cB + (tb - cB) * mix) + ',' +
+                          Math.min(1, baseA + waveI * 0.45).toFixed(3) + ')';
           ctx.fillText(ch, px + glyphDx, py + glyphDy);
+          if (waveHot) ctx.fillText(ch, px + glyphDx + 0.7, py + glyphDy + 0.7);
           ctx.fillStyle = baseFill;
         } else {
           ctx.fillText(ch, px + glyphDx, py + glyphDy);
         }
+      }
+    }
+
+    // --- Relleno del título: dos capas dentro de la forma (D5) -----------
+    // Solo pre-play. Comparte el revelado L->R del hueco: mientras abre se
+    // compone en un canvas auxiliar con un borde suave de 40px; al
+    // terminar, dos drawImage directos (fast-path).
+    if (titleInkLayer && titleLightLayer && !(fx && fx.welcomeDone)) {
+      if (revealX >= w - 1) {
+        ctx.drawImage(titleLightLayer, 0, 0);
+        ctx.drawImage(titleInkLayer, 0, 0);
+      } else if (titleMixLayer && titleMixLayer.width === w) {
+        const m = titleMixLayer.getContext('2d');
+        m.globalCompositeOperation = 'source-over';
+        m.clearRect(0, 0, w, h);
+        m.drawImage(titleLightLayer, 0, 0);
+        m.drawImage(titleInkLayer, 0, 0);
+        const edge = Math.max(1, revealX + 40);
+        const gr = m.createLinearGradient(0, 0, edge, 0);
+        gr.addColorStop(0, 'rgba(0,0,0,1)');
+        gr.addColorStop(Math.max(0, Math.min(1, revealX / edge)), 'rgba(0,0,0,1)');
+        gr.addColorStop(1, 'rgba(0,0,0,0)');
+        m.globalCompositeOperation = 'destination-in';
+        m.fillStyle = gr;
+        m.fillRect(0, 0, edge, h);
+        m.globalCompositeOperation = 'source-over';
+        ctx.drawImage(titleMixLayer, 0, 0);
       }
     }
 
@@ -1269,6 +1395,9 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
         lines: titleBox ? titleBox.lines.length : 0,
         hard: TITLE_HARD, halo: TITLE_HALO, cell: TITLE_CELL,
         revealT0: titleRevealT0,
+        fill: { base: TITLE_FILL_BASE, light: TITLE_FILL_LIGHT,
+                dx: TITLE_FILL_DX, dy: TITLE_FILL_DY,
+                painted: !!(titleInkLayer && titleLightLayer) },
         fonts: titleBox ? titleBox.lines.map(l => l.font) : []
       };
     };
@@ -1983,6 +2112,40 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
       if (gate.classList.contains('hidden')) return;
       btn.click();
     });
+
+    // Reactividad al puntero (gate-start): el arco gira hacia el ángulo
+    // del cursor y el aro se acerca según la proximidad, escribiendo dos
+    // custom properties en .play-wrap (el CSS solo interpola). Solo con el
+    // gate visible; bajo reduced-motion no se escribe rotación (queda
+    // estático, solo brillo). pointermove pasivo + un write por frame.
+    const playWrap = document.querySelector('.play-wrap') || btn;
+    let playPullT = 0, playQueued = false;
+    let playRM = null;
+    try { playRM = window.matchMedia('(prefers-reduced-motion: reduce)'); } catch (e) {}
+    function playPointerFollow(x, y) {
+      if (gate.classList.contains('hidden')) return;
+      const b = btn.getBoundingClientRect();
+      const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+      const dx = x - cx, dy = y - cy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const pull = Math.max(0, Math.min(1, 1 - dist / 240));
+      if (!playRM || !playRM.matches) {
+        const rot = dist > 6 ? (Math.atan2(dy, dx) * 180 / Math.PI + 90) : 0;
+        playWrap.style.setProperty('--play-rot', rot.toFixed(1) + 'deg');
+      }
+      playWrap.style.setProperty('--play-pull', pull.toFixed(3));
+      clearTimeout(playPullT);
+      playPullT = setTimeout(() => {
+        playWrap.style.setProperty('--play-rot', '0deg');
+        playWrap.style.setProperty('--play-pull', '0');
+      }, 1200);
+    }
+    window.addEventListener('pointermove', (e) => {
+      if (playQueued) return;
+      playQueued = true;
+      const x = e.clientX, y = e.clientY;
+      requestAnimationFrame(() => { playQueued = false; playPointerFollow(x, y); });
+    }, { passive: true });
   }
 
   // Flash blanco unico al pulsar play: fullscreen, <600ms, no bloquea.
