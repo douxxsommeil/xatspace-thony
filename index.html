@@ -820,7 +820,17 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
 
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, w, h);
-    ctx.fillStyle = '#e8e8e6';
+
+    // Color reactivo al bajo, resuelto UNA VEZ por frame (D4): reposo
+    // atenuado rgba(232,232,230,0.62) -> blanco puro con la señal combinada
+    // w = clamp(sub + pulso de kick, 0, 1). Sin análisis (pre-gate, file://
+    // o sin Web Audio): w = 0 -> reposo estático.
+    const fx = window.__FX;
+    const wMix = (fx && fx.ok) ? Math.min(1, fx.sub + fx.kick) : 0;
+    ctx.fillStyle = 'rgba(' + Math.round(232 + 23 * wMix) + ',' +
+                    Math.round(232 + 23 * wMix) + ',' +
+                    Math.round(230 + 25 * wMix) + ',' +
+                    (0.62 + 0.38 * wMix).toFixed(3) + ')';
 
     const gridW = state.gridW, gridH = state.gridH;
     const density = state.density;
@@ -887,6 +897,43 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
         ctx.fillText(ch, px, py);
       }
     }
+
+    // --- Onda expansiva única (solo gate; decorativa) -------------------
+    // Anillos "gota" desde el centro geométrico del canvas: 3 aros
+    // escalonados 120 ms de 1.16 s => 1.40 s en total (≤1.5 s), radio con
+    // ease-out hasta cubrir la pantalla y opacidad decreciente. Se arma en
+    // el click del gate (FX.startRipple, única por sesión vía rippleDone).
+    // try/finally: nunca deja el canvas en composite raro ni rompe el frame;
+    // reduced-motion / sin disparo: rippleT0 = null y no se dibuja nada.
+    if (fx && fx.rippleT0 != null) {
+      try {
+        const rt = performance.now() - fx.rippleT0;
+        if (rt >= 1400) {
+          fx.rippleT0 = null; // se apaga sola al terminar (1.4 s)
+        } else {
+          const maxR = Math.hypot(w, h) / 2;
+          const rcx = w / 2, rcy = h / 2;
+          ctx.save();
+          try {
+            ctx.globalCompositeOperation = 'lighter';
+            for (let ri = 0; ri < 3; ri++) {
+              const p = (rt - ri * 120) / 1160;
+              if (p <= 0 || p >= 1) continue;
+              const alpha = 0.7 * (1 - p) * (1 - p);
+              if (alpha < 0.02) continue;
+              ctx.beginPath();
+              ctx.arc(rcx, rcy, maxR * (1 - Math.pow(1 - p, 3)), 0, Math.PI * 2);
+              ctx.strokeStyle = 'rgba(255,255,255,' + alpha.toFixed(3) + ')';
+              ctx.lineWidth = 3;
+              ctx.stroke();
+            }
+          } finally {
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.restore();
+          }
+        }
+      } catch (e) { /* onda decorativa: jamás rompe el render ni el play */ }
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -908,6 +955,10 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
         state.accum -= frameDur;
         state.frameIndex = (state.frameIndex + 1) % state.nFrames;
       }
+    }
+
+    if (window.__FX && window.__FX.update) {
+      try { window.__FX.update(ts); } catch (e) { /* análisis decorativo */ }
     }
 
     drawFrame();
@@ -1150,6 +1201,135 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
   const audioB = new Audio();
   let audioCur = audioA;     // el que suena
   let audioNxt = audioB;     // el que entrara en el crossfade
+
+  // -----------------------------------------------------------------------
+  // Análisis de bajo para el color reactivo del ASCII + onda del gate.
+  // Tapa (tap) de Web Audio sobre audioA/audioB: NO altera volumen,
+  // crossfade ni ducking. Decorativo y aislado: si Web Audio no arranca,
+  // degrada a reposo estático sin errores (la regla: nunca rompe el play).
+  // -----------------------------------------------------------------------
+  const FX = {
+    ctx: null, analyser: null, freq: null, els: [audioA, audioB],
+    ok: false, failed: false,
+    subLo: 1, subHi: 5, kickLo: 6, kickHi: 13,
+    srcs: new WeakSet(),       // createMediaElementSource es irrevocable
+    sub: 0, kick: 0,           // envolventes 0..1 (lo que pinta el color)
+    rawSub: 0, rawKick: 0,     // lecturas crudas (verificación/calibración)
+    peak: 0.10, avgK: 0, lastKick: -1e9, kickArmed: true,
+    kickHits: [],              // marcas de kick (cap 64, depuración)
+    lastTs: 0, mql: null,
+    rippleT0: null, rippleDone: false   // onda expansiva (única por sesión)
+  };
+  window.__FX = FX;
+
+  // Se llama SOLO desde el click del gate (política de autoplay = gesto).
+  FX.init = function () {
+    if (FX.ok || FX.failed) return;
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) { FX.failed = true; return; }
+      // file:// = origen opaco: createMediaElementSource saldría en silencio
+      // (verificado: energía 0 con música "sonando") y dejaría la página muda.
+      // Allí manda la degradación (design Non-Goals): sin enrutar, la música
+      // suena normal y los glifos se quedan en reposo estático.
+      if (location.protocol === 'file:') { FX.failed = true; return; }
+      if (!FX.ctx) {
+        const ctx = new AC();
+        const an = ctx.createAnalyser();
+        an.fftSize = 4096;                 // bin ≈ 11.7 Hz @48k: resuelve 20-60 Hz
+        an.smoothingTimeConstant = 0.55;
+        const binHz = ctx.sampleRate / an.fftSize;
+        FX.subLo = Math.max(1, Math.ceil(20 / binHz));
+        FX.subHi = Math.max(FX.subLo, Math.floor(60 / binHz));
+        FX.kickLo = FX.subHi + 1;
+        FX.kickHi = Math.max(FX.kickLo, Math.ceil(150 / binHz));
+        FX.freq = new Uint8Array(an.frequencyBinCount);
+        an.connect(ctx.destination);       // rama pasante: el sonido no se corta
+        FX.els.forEach((el) => {
+          if (FX.srcs.has(el)) return;     // una sola vez por elemento
+          FX.srcs.add(el);
+          ctx.createMediaElementSource(el).connect(an);
+        });
+        FX.ctx = ctx;
+        FX.analyser = an;
+      }
+      FX.mql = FX.mql || window.matchMedia('(prefers-reduced-motion: reduce)');
+      if (FX.ctx.state === 'suspended') FX.ctx.resume().catch(() => {});
+      FX.ok = true;
+    } catch (e) {
+      FX.failed = true; FX.ok = false;     // degradación silenciosa
+    }
+  };
+
+  // Una lectura por frame (desde tick). Todo envuelto: nunca tira el loop.
+  FX.update = function (ts) {
+    if (!FX.ok || !FX.analyser) { FX.sub = 0; FX.kick = 0; return; }
+    try {
+      if (FX.ctx.state !== 'running') {    // reintenta resume sin romper nada
+        FX.ctx.resume().catch(() => {});
+        FX.sub *= 0.9; FX.kick = 0;
+        return;
+      }
+      FX.analyser.getByteFrequencyData(FX.freq);
+      const dt = Math.min(120, ts - (FX.lastTs || ts));
+      FX.lastTs = ts;
+
+      // --- sub-bass 20-60 Hz: media de banda -> envolvente lenta ---
+      let s = 0;
+      for (let i = FX.subLo; i <= FX.subHi; i++) s += FX.freq[i];
+      s = s / ((FX.subHi - FX.subLo + 1) * 255);
+      FX.rawSub = s;
+      // Techo adaptativo: pico con caída lenta (~half-life 23 s) para que un
+      // tema "siempre fuerte" no se quede en blanco fijo sin dramatismo.
+      FX.peak = Math.max(0.10, FX.peak * (1 - 0.03 * dt / 1000));
+      if (s > FX.peak) FX.peak = s;
+      const target = Math.min(1, s / Math.max(0.10, FX.peak * 0.85));
+      const tau = target > FX.sub ? 0.40 : 1.10;  // ataque ≈0.4 s / caída ≈1.1 s
+      FX.sub += (target - FX.sub) * (1 - Math.exp(-dt / 1000 / tau));
+
+      // --- kick 60-150 Hz: transitorio vs media corriendo ---
+      let k = 0;
+      for (let i = FX.kickLo; i <= FX.kickHi; i++) k += FX.freq[i];
+      k = k / ((FX.kickHi - FX.kickLo + 1) * 255);
+      FX.rawKick = k;
+      // Media corrienda dt-dependiente (τ≈160 ms real: igual a 19 fps que a 60).
+      const aK = 1 - Math.pow(0.9, dt / 16.7);
+      FX.avgK = FX.avgK * (1 - aK) + k * aK;
+      // Umbral relativo + cooldown ~150 ms + re-armado en borde de bajada:
+      // tras un golpe hay que salir del umbral (k < media) para no re-disparar
+      // con la sostenida del bajo aún alta. Calibrado con el mp3 real
+      // (traza de 31 s, picos cada ~2.1 s): ~1 golpe por bombo, 0 dobles.
+      if (FX.kickArmed) {
+        if (k > FX.avgK * 1.15 + 0.05 && k > 0.12 && ts - FX.lastKick > 150) {
+          FX.lastKick = ts;
+          FX.kickArmed = false;
+          FX.kickHits.push(Math.round(ts));
+          if (FX.kickHits.length > 64) FX.kickHits.shift();
+          // Pulso instantáneo "soft": amplitud acotada (0.45: solo nunca
+          // lleva a blanco puro). Reduced-motion: sin pulsos; el sub sigue.
+          if (!FX.mql || !FX.mql.matches) FX.kick = 0.45;
+        }
+      } else if (k < FX.avgK) {
+        FX.kickArmed = true;
+      }
+      FX.kick *= Math.exp(-dt / 300);      // caída ≈300 ms
+      if (FX.kick < 0.004) FX.kick = 0;
+    } catch (e) {
+      FX.ok = false; FX.sub = 0; FX.kick = 0;
+    }
+  };
+
+  // Onda expansiva del gate: única por sesión, con la misma guarda de
+  // movimiento reducido que el flash existente.
+  FX.startRipple = function () {
+    if (FX.rippleDone) return;
+    FX.rippleDone = true;
+    try {
+      FX.mql = FX.mql || window.matchMedia('(prefers-reduced-motion: reduce)');
+      if (FX.mql.matches) return;
+      FX.rippleT0 = performance.now();
+    } catch (e) { /* decorativo */ }
+  };
 
   function fmtTime(s) {
     if (!isFinite(s) || s < 0) s = 0;
@@ -1468,6 +1648,8 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
 
     btn.addEventListener('click', () => {
       firePlayFlash();
+      FX.init();            // análisis de bajo dentro del gesto de usuario
+      FX.startRipple();     // onda expansiva única (solo aquí, solo una vez)
       gate.classList.add('hidden');
       dock.classList.add('show');
       playDecodeAnimation();
