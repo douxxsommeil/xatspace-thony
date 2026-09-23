@@ -660,6 +660,15 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
   // Margen de exclusion opaco (sin filtraciones) alrededor de cada card.
   const REPEL_MARGIN = 12;
   let repelRects = [];
+  // Título de bienvenida pre-play (D7): texto relleno que repela los glifos
+  // con el MISMO mecanismo que la UI, pero con margen ampliable (los
+  // "espacios" que hacen que el texto relleno se note). Estado:
+  // TITLE_MARGIN > REPEL_MARGIN, lineas centradas, la id siempre menor.
+  const TITLE_MARGIN = 22;            // halo de exclusion (el de la UI: 12)
+  const TITLE_TEXT = 'DouxSommeil';
+  const TITLE_ID = '1550490712';
+  let titleRects = [];                // rects de exclusion (px CSS canvas)
+  let titleBox = null;                // layout cacheado: { w, h, lines }
   function pointInRoundedRect(px, py, r) {
     if (px < r.x || px > r.x + r.w || py < r.y || py > r.y + r.h) return 0;
     const rad = Math.min(r.r, r.w / 2, r.h / 2);
@@ -672,8 +681,7 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     const dx = px - cx, dy = py - cy;
     return (dx * dx + dy * dy <= rad * rad) ? 1 : 0;
   }
-  function pointInExclusion(px, py, r) {
-    const m = REPEL_MARGIN;
+  function pointInExclusion(px, py, r, m = REPEL_MARGIN) {
     const ex = r.x - m, ey = r.y - m, ew = r.w + m * 2, eh = r.h + m * 2;
     if (px < ex || px > ex + ew || py < ey || py > ey + eh) return 0;
     if (pointInRoundedRect(px, py, r)) return 1;
@@ -711,6 +719,37 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
       }
     } catch (e) { /* repulsion es decorativa, nunca rompe el render */ }
   }
+
+  // Layout del título de bienvenida: dos líneas centradas (la id SIEMPRE
+  // más pequeña) + sus rects de exclusión. Se rehace solo si cambia el
+  // tamaño del canvas; medición con la misma familia monoespaciada.
+  function layoutWelcomeTitle(w, h) {
+    const fs = Math.round(Math.max(34, Math.min(w * 0.075, h * 0.16)));
+    const fsId = Math.round(fs * 0.42); // la id siempre más pequeña
+    const gap = Math.round(fs * 0.20);
+    const y0 = Math.round(h * 0.16);    // por encima del gate centrado
+    const fam = "'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace";
+    const rects = [], lines = [];
+    try {
+      ctx.save();
+      try {
+        ctx.font = fs + 'px ' + fam;
+        const w1 = ctx.measureText(TITLE_TEXT).width;
+        const x1 = Math.round((w - w1) / 2);
+        rects.push({ x: x1, y: y0, w: w1, h: fs, r: 8 });
+        lines.push({ font: fs + 'px ' + fam, text: TITLE_TEXT, x: x1, y: y0 });
+        const y1 = y0 + Math.round(fs * 0.95) + gap;
+        ctx.font = fsId + 'px ' + fam;
+        const w2 = ctx.measureText(TITLE_ID).width;
+        const x2 = Math.round((w - w2) / 2);
+        rects.push({ x: x2, y: y1, w: w2, h: fsId, r: 6 });
+        lines.push({ font: fsId + 'px ' + fam, text: TITLE_ID, x: x2, y: y1 });
+      } finally { ctx.restore(); }
+    } catch (e) { titleRects = []; titleBox = null; return; }
+    titleRects = rects;
+    titleBox = { w: w, h: h, lines: lines };
+  }
+
   let lastTime = 0;
 
   // ---------------------------------------------------------------------
@@ -822,15 +861,37 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     ctx.fillRect(0, 0, w, h);
 
     // Color reactivo al bajo, resuelto UNA VEZ por frame (D4): reposo
-    // atenuado rgba(232,232,230,0.62) -> blanco puro con la señal combinada
-    // w = clamp(sub + pulso de kick, 0, 1). Sin análisis (pre-gate, file://
-    // o sin Web Audio): w = 0 -> reposo estático.
+    // atenuado rgba(232,232,230,0.62) -> blanco puro con el sub-bass
+    // (base = lerp(resto, #fff, sub)) y, ENCIMA, el destello del kick
+    // hacia el siguiente color de la portada (D6: color = lerp(base,
+    // paleta[i], kick), caída ~300 ms, un color por bombo en ciclo de 4).
+    // Sin análisis (pre-gate, file:// o sin Web Audio): sub = kick = 0
+    // -> reposo estático.
     const fx = window.__FX;
-    const wMix = (fx && fx.ok) ? Math.min(1, fx.sub + fx.kick) : 0;
-    ctx.fillStyle = 'rgba(' + Math.round(232 + 23 * wMix) + ',' +
-                    Math.round(232 + 23 * wMix) + ',' +
-                    Math.round(230 + 25 * wMix) + ',' +
-                    (0.62 + 0.38 * wMix).toFixed(3) + ')';
+    const okFx = !!(fx && fx.ok);
+    const sMix = okFx ? Math.min(1, fx.sub) : 0;
+    const kMix = okFx ? fx.kick : 0;
+    let cR = 232 + 23 * sMix, cG = 232 + 23 * sMix, cB = 230 + 25 * sMix;
+    if (kMix > 0 && fx.palIdx >= 0) {
+      const pc = fx.pal[fx.palIdx];
+      cR += (pc[0] - cR) * kMix;
+      cG += (pc[1] - cG) * kMix;
+      cB += (pc[2] - cB) * kMix;
+    }
+    ctx.fillStyle = 'rgba(' + Math.round(cR) + ',' + Math.round(cG) + ',' +
+                    Math.round(cB) + ',' +
+                    (0.62 + 0.38 * Math.min(1, sMix + kMix)).toFixed(3) + ')';
+
+    // --- Título de bienvenida (solo pre-play, D7) ------------------------
+    // Dos líneas centradas en el color de reposo; sus rects excluyen los
+    // glifos con halo ampliable (TITLE_MARGIN). Vive hasta el primer play
+    // del gate (FX.welcomeDone) y no vuelve hasta recargar. Decorativo:
+    // va pintado en el canvas, así que jamás intercepta clics.
+    if (fx && fx.welcomeDone) {
+      if (titleRects.length) { titleRects = []; titleBox = null; }
+    } else if (!titleBox || titleBox.w !== w || titleBox.h !== h) {
+      layoutWelcomeTitle(w, h);
+    }
 
     const gridW = state.gridW, gridH = state.gridH;
     const density = state.density;
@@ -869,14 +930,24 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
         if (b < 14) continue;
 
         // Repulsion dura con forma de card: dentro + margen = skip 100%, sin filtraciones.
-        if (repelRects.length) {
+        // El título de bienvenida (pre-play) repela con el mismo test pero
+        // con halo ampliable (TITLE_MARGIN): los "espacios" del texto relleno.
+        if (repelRects.length || titleRects.length) {
           let excluded = false;
-          for (let ri = 0; ri < repelRects.length; ri++) {
+          for (let ri = 0; ri < repelRects.length && !excluded; ri++) {
             const r = repelRects[ri];
             // Early-out por bbox del margen (barato) antes del test rounded-rect.
             const m = REPEL_MARGIN;
             if (px < r.x - m || px > r.x + r.w + m || py < r.y - m || py > r.y + r.h + m) continue;
-            if (pointInExclusion(px, py, r)) { excluded = true; break; }
+            if (pointInExclusion(px, py, r)) excluded = true;
+          }
+          if (!excluded && titleRects.length) {
+            for (let ti = 0; ti < titleRects.length; ti++) {
+              const r = titleRects[ti];
+              const m = TITLE_MARGIN;
+              if (px < r.x - m || px > r.x + r.w + m || py < r.y - m || py > r.y + r.h + m) continue;
+              if (pointInExclusion(px, py, r, m)) { excluded = true; break; }
+            }
           }
           if (excluded) continue;
         }
@@ -896,6 +967,18 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
 
         ctx.fillText(ch, px, py);
       }
+    }
+
+    // --- Título de bienvenida (solo pre-play; encima de los glifos) ------
+    if (titleBox && titleRects.length) {
+      ctx.save();
+      try {
+        const tLines = titleBox.lines;
+        for (let li = 0; li < tLines.length; li++) {
+          ctx.font = tLines[li].font;
+          ctx.fillText(tLines[li].text, tLines[li].x, tLines[li].y);
+        }
+      } finally { ctx.restore(); }
     }
 
     // --- Onda expansiva única (solo gate; decorativa) -------------------
@@ -975,6 +1058,14 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     setInterval(updateRepelRects, 2000);
     // Exponer para que el overlay refresque tras abrir/cerrar panel.
     window.__updateRepelRects = updateRepelRects;
+    // Lectura de estado del título de bienvenida (solo verificación).
+    window.__welcomeState = () => ({
+      done: !!(window.__FX && window.__FX.welcomeDone),
+      n: titleRects.length,
+      m: TITLE_MARGIN,
+      rects: titleRects.map(r => ({ x: Math.round(r.x), y: Math.round(r.y),
+                                    w: Math.round(r.w), h: Math.round(r.h) }))
+    });
   }
 
   // ---------------------------------------------------------------------
@@ -1217,6 +1308,11 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     rawSub: 0, rawKick: 0,     // lecturas crudas (verificación/calibración)
     peak: 0.10, avgK: 0, lastKick: -1e9, kickArmed: true,
     kickHits: [],              // marcas de kick (cap 64, depuración)
+    // Paleta fija de la portada (D6): rosa, crema, topo, marrón. Un color
+    // por bombo, ciclo (i+1)%4; -1 = aún sin bombo (el primero pinta rosa).
+    pal: [[198, 149, 141], [234, 225, 202], [147, 136, 132], [61, 43, 37]],
+    palIdx: -1,
+    welcomeDone: false,        // título pre-play: se apaga en el 1er gate (D7)
     lastTs: 0, mql: null,
     rippleT0: null, rippleDone: false   // onda expansiva (única por sesión)
   };
@@ -1305,9 +1401,12 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
           FX.kickArmed = false;
           FX.kickHits.push(Math.round(ts));
           if (FX.kickHits.length > 64) FX.kickHits.shift();
-          // Pulso instantáneo "soft": amplitud acotada (0.45: solo nunca
-          // lleva a blanco puro). Reduced-motion: sin pulsos; el sub sigue.
-          if (!FX.mql || !FX.mql.matches) FX.kick = 0.45;
+          // Destello de portada (D6): cada bombo avanza el ciclo de 4
+          // colores y pinta un tinte instantáneo con caída ~300 ms.
+          // Amplitud acotada (0.70 < 1: tinte marcado pero nunca color
+          // pleno ni estrobeo); reduced-motion: sin destellos, el sub sigue.
+          FX.palIdx = (FX.palIdx + 1) % FX.pal.length;
+          if (!FX.mql || !FX.mql.matches) FX.kick = 0.70;
         }
       } else if (k < FX.avgK) {
         FX.kickArmed = true;
@@ -1648,6 +1747,7 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
 
     btn.addEventListener('click', () => {
       firePlayFlash();
+      FX.welcomeDone = true;  // título de bienvenida: fuera para siempre (D7)
       FX.init();            // análisis de bajo dentro del gesto de usuario
       FX.startRipple();     // onda expansiva única (solo aquí, solo una vez)
       gate.classList.add('hidden');
