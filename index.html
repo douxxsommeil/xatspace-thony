@@ -79,8 +79,9 @@
     -webkit-tap-highlight-color:transparent;
   }
 
-  /* Núcleo central: un disco sutil detrás del triángulo, separado de los
-     anillos para poder animar cada capa a su propio ritmo. */
+  /* Núcleo central: disco sin vidrio — transparente con hairline (mismo
+     lenguaje editorial que la card del dock); el repel mantiene la zona
+     alrededor del botón tranquila. */
   #playBtn::before{
     content:'';
     position:absolute;
@@ -88,9 +89,8 @@
     transform: translate(-50%, -50%);
     width:58px; height:58px;
     border-radius:50%;
-    background:var(--ui-bg-solid);
-    border:1px solid rgba(255,255,255,0.16);
-    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    background: rgba(0,0,0,0.35);
+    border:1px solid rgba(232,232,230,0.16);
     transition: background .25s ease, border-color .25s ease, width .25s ease, height .25s ease;
   }
 
@@ -101,10 +101,18 @@
   .play-ring--track{
     opacity:.7;
   }
+  /* Anillo que respira (editorial): sin scan giratorio — un pulso lento
+     de opacidad/escala, el mismo lenguaje quieto del resto de la UI. */
   .play-ring--scan{
-    animation: scanRotate 3.2s linear infinite;
-    filter: drop-shadow(0 0 3px rgba(232,232,230,0.35));
-    transition: animation-duration .3s ease;
+    animation: ringBreathe 3.6s ease-in-out infinite;
+    transform-origin: 48px 48px;
+  }
+  @keyframes ringBreathe{
+    0%, 100%{ opacity:.5; transform: scale(1); }
+    50%{ opacity:.95; transform: scale(1.05); }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .play-ring--scan{ animation:none; opacity:.8; }
   }
 
   .play-icon{
@@ -114,30 +122,40 @@
   }
 
   .play-label{
+    display:flex; flex-direction:column; align-items:center; gap:7px;
+  }
+  .play-word{
+    font-family: var(--serif-italic);
+    font-style: italic;
+    font-weight:500;
+    font-size:16px;
+    line-height:1;
+    color:var(--ink-dim);
+    transition: color .25s ease;
+    user-select:none;
+  }
+  .play-hint{
     font-family: var(--mono);
-    font-size:10px;
+    font-size:8.5px;
     letter-spacing:.38em;
-    color:var(--ink-faint);
     padding-left:.38em; /* compensa el letter-spacing para centrar ópticamente */
-    transition: color .25s ease, letter-spacing .25s ease;
+    color:var(--ink-faint);
+    transition: color .25s ease;
     user-select:none;
   }
 
   #playBtn:hover::before{
-    background: rgba(20,20,20,0.92);
-    border-color: rgba(255,255,255,0.38);
+    background: rgba(0,0,0,0.6);
+    border-color: rgba(232,232,230,0.38);
     width:62px; height:62px;
   }
-  #playBtn:hover .play-ring--scan{ animation-duration: 1.4s; }
+  #playBtn:hover .play-ring--scan{ animation-duration: 1.8s; }
   #playBtn:hover .play-icon{ transform: scale(1.08); }
-  .play-wrap:hover .play-label{ color:var(--ink-dim); letter-spacing:.44em; }
+  .play-wrap:hover .play-word{ color:var(--ink); }
+  .play-wrap:hover .play-hint{ color:var(--ink-dim); }
 
   #playBtn:active .play-icon{ transform: scale(0.94); }
   #playBtn:active::before{ width:56px; height:56px; }
-
-  @keyframes scanRotate{
-    to{ transform: rotate(360deg); }
-  }
 
   /* ================= DOCK (avatar + card) ================= */
   #dock{
@@ -533,7 +551,10 @@
         <path d="M5 2.8L17 10L5 17.2V2.8Z" fill="#e8e8e6"/>
       </svg>
     </button>
-    <div class="play-label">ENTER</div>
+    <div class="play-label">
+      <span class="play-word">escuchar</span>
+      <span class="play-hint">ENTER</span>
+    </div>
   </div>
 </div>
 
@@ -724,6 +745,14 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
       const panel = document.getElementById('spotifyPanel');
       if (panel && panel.classList.contains('show') && !panel.classList.contains('idle')) {
         push(panel.querySelector('.spotify-frame-wrap'), 12);
+      }
+      // Gate pre-play: el botón flota en una zona de glifos calmados,
+      // el mismo lenguaje de "silencio" que el título-anomalía. Radio 48
+      // (mitad del lado): la exclusión sigue el CÍRCULO del botón, sin
+      // bolsillos de esquina.
+      const gate = document.getElementById('playGate');
+      if (gate && !gate.classList.contains('hidden')) {
+        push(document.getElementById('playBtn'), 48);
       }
     } catch (e) { /* repulsion es decorativa, nunca rompe el render */ }
   }
@@ -1226,6 +1255,9 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     window.addEventListener('resize', () => { resize(); updateRepelRects(); });
     // Respaldo ocasional; la via principal son llamadas sincronas en cada cambio.
     setInterval(updateRepelRects, 2000);
+    // Llamada inicial: el gate (con su repel) es visible desde el load y no
+    // puede esperar al primer tick del interval.
+    updateRepelRects();
     // Exponer para que el overlay refresque tras abrir/cerrar panel.
     window.__updateRepelRects = updateRepelRects;
     // Lectura de estado del título de bienvenida (solo verificación).
@@ -1941,6 +1973,15 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
       setupAutoReset();
       playlistStart(); // gate: reproduce la lista completa desde la pista 1
       refreshRepelGlobal();
+    });
+
+    // Tecla Enter (gate-start): mismo flujo que el clic, solo mientras el
+    // gate es visible; el auto-repeat se ignora y, tras el play, la guarda
+    // del .hidden vuelve este listener inerte por sí sola.
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.repeat) return;
+      if (gate.classList.contains('hidden')) return;
+      btn.click();
     });
   }
 
