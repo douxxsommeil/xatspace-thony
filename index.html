@@ -104,31 +104,43 @@
     transition: background .25s ease, border-color .25s ease, width .25s ease, height .25s ease;
   }
 
-  /* Botón play como LENTE DE CRISTAL (D7): un único elemento óptico que
-     dobla los glifos que pasan por detrás. El canvas .play-lens redibuja
-     la región del canvas ASCII bajo el botón desplazada radialmente
-     (refracción por rebanadas) y le superpone canto cromático + realce.
-     No hay arco orbital ni pulso: eran cinco elementos que se leían
-     estáticos; esto es uno solo y se ve. Ni WebGL ni audio pre-play. */
+  /* Botón play como PERLA DE CRISTAL (D7): una escena WebGL de 120 px
+     DENTRO del botón (canvas .play-lens) que lleva el campo de glifos
+     comprimido, como mirar a través de una canica: refracción radial,
+     dispersión cromática en el canto, sombreado de esfera y un especular
+     que recorre el borde. El shader se encarga, así que el movimiento es
+     real a 60 fps en vez de un desplazamiento sub-pixel.
+     Tamaño contenido a propósito (120 px): no toca los números del título
+     de bienvenida ni la etiqueta "escuchar".
+     Si no hay WebGL (o bajo file://, donde los módulos ES no importan), el
+     botón recibe la clase .no-gl3d y cae a una perla estática de CSS: nunca
+     se rompe ni queda un agujero. */
   .play-lens{
     position:absolute; top:50%; left:50%;
-    width:196px; height:196px;
-    margin:-98px 0 0 -98px;
+    width:120px; height:120px;
+    margin:-60px 0 0 -60px;
     border-radius:50%;
     pointer-events:none;
     z-index:0;
   }
+  #playBtn.no-gl3d .play-lens{
+    background:
+      radial-gradient(circle at 36% 30%,
+        rgba(232,232,230,0.13) 0%, rgba(232,232,230,0.05) 26%,
+        rgba(0,0,0,0.30) 62%, rgba(0,0,0,0.55) 100%);
+    box-shadow: inset 0 0 0 1px rgba(191,112,96,0.22);
+  }
   /* Aro hairline: el contorno del cristal (el cuerpo es el canvas). */
   .play-lens-edge{
     position:absolute; top:50%; left:50%;
-    width:132px; height:132px;
-    margin:-66px 0 0 -66px;
+    width:104px; height:104px;
+    margin:-52px 0 0 -52px;
     border-radius:50%;
-    border:1px solid rgba(232,232,230,0.13);
+    border:1px solid rgba(232,232,230,0.10);
     pointer-events:none;
     z-index:2;
     transition: border-color .3s ease, opacity .3s ease;
-    opacity:.75;
+    opacity:.7;
   }
   #playBtn:hover .play-lens-edge,
   #playBtn:focus-visible .play-lens-edge{
@@ -1509,21 +1521,31 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     GL3D.drawnBlack = false;    // tras un resize hay que repintar
   }
 
-  // Punto de entrada: se llama tras el play (dentro del gesto del usuario).
-  function gl3dBoot() {
-    if (GL3D.ready || GL3D.failed) return;
-    // Bajo file:// los módulos ES no se pueden importar (CORS): se marca
-    // como no disponible SIN intentarlo — así no hay error de consola — y
-    // la página sigue con el canvas 2D y su degradación habitual.
+  // Un UNICO import del módulo vendorizado, compartido por la perla del botón
+  // (que se arma al cargar) y la capa de olas (que se arma en el play). Bajo
+  // file:// los módulos ES no se pueden importar (CORS): se marca como no
+  // disponible SIN intentarlo — así no hay error de consola — y cada capa cae
+  // a su degradación (perla de CSS / canvas 2D).
+  let threePromise = null;
+  function threeModule() {
+    if (window.__GL3D_THREE__) return Promise.resolve(window.__GL3D_THREE__);
+    if (threePromise) return threePromise;
     let isFile = true;
     try { isFile = (location.protocol === 'file:'); } catch (e) { isFile = true; }
-    if (isFile) { GL3D.failed = true; return; }
-    // Si el módulo aún no está (import asíncrono), se reintenta al próximo
-    // tick mediante window.__GL3D_THREE__ (lo inyecta el import).
+    if (isFile) { threePromise = Promise.reject(new Error('file://')); return threePromise; }
+    threePromise = import('./assets/vendor/three.module.min.js')
+      .then((mod) => { window.__GL3D_THREE__ = mod; return mod; })
+      .catch((e) => { threePromise = null; throw e; });
+    return threePromise;
+  }
+
+  // Punto de entrada de la CAPA DE OLAS: se llama tras el play, dentro del
+  // gesto del usuario. La perla puede haber cargado el módulo antes; si no, se
+  // reintenta al próximo tick mediante window.__GL3D_THREE__.
+  function gl3dBoot() {
+    if (GL3D.ready || GL3D.failed) return;
     if (!window.__GL3D_THREE__) {
-      import('./assets/vendor/three.module.min.js')
-        .then((mod) => { window.__GL3D_THREE__ = mod; gl3dInit(); })
-        .catch(() => { GL3D.failed = true; });
+      threeModule().then(() => gl3dInit()).catch(() => { GL3D.failed = true; });
       return;
     }
     gl3dInit();
@@ -1534,9 +1556,10 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
   // subsistema toca el estado del otro.
   GL3D.update = function (nowMs) {
     if (!GL3D.ready) {
-      // Primer intento diferido si el import aún no ha resuelto.
-      if (!GL3D.failed && window.__GL3D_THREE__) gl3dInit();
-      if (!GL3D.ready) return;
+      // La capa de olas se arma SOLO en el play (gl3dBoot). No se auto-inicia
+      // aqui: la perla del boton carga el modulo antes, y arrancarla desde el
+      // tick encenderia la capa de oleaje antes de tiempo.
+      return;
     }
     try {
       // Reloj propio del subsistema 3D (performance.now), coherente con
@@ -1701,6 +1724,7 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
   };
   window.__GL3D = GL3D;
   window.__gl3dBoot = gl3dBoot;   // lo llama el play (otro script)
+  window.__threeModule = threeModule;   // lo comparte la perla del boton
 
   // Resize: un solo handler para las dos capas (D1).
   const gl3dOriginalResize = resize;
@@ -2379,10 +2403,11 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
     const gate = document.getElementById('playGate');
     const btn = document.getElementById('playBtn');
     const dock = document.getElementById('dock');
-    // Lente de cristal (D7): se crea ANTES del listener para que el clic
-    // pueda profundizarla. Solo canvas 2D, sin WebGL ni audio pre-play.
-    const lens = setupGlassLens(btn, gate);
-    window.__playLens = lens;              // lectura para verificación
+    // Perla de cristal (D7): se crea ANTES del listener para que el clic
+    // pueda profundizarla y retirarla. Escena WebGL propia de 120 px sobre
+    // los glifos; al arrancar se destruye y solo queda la capa de olas.
+    const bead = setupBead(btn, gate);
+    window.__bead = bead;                  // lectura para verificación
 
     btn.addEventListener('click', () => {
       // Respuesta al gesto (D6): la capa 3D se inicializa aquí (dentro del
@@ -2390,7 +2415,8 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
       // de glifos y los anillos del canvas (D6).
       if (window.__gl3dBoot) window.__gl3dBoot();
       try { if (window.__GL3D) window.__GL3D.emitStartup(FX.palIdx); } catch (e) {}
-      if (lens) lens.boost();   // la lente se profundiza un instante (D7)
+      if (bead) bead.boost();     // la perla se profundiza un instante (D7)
+      if (bead) bead.stop();      // y se retira: su contexto se libera (D7)
       FX.welcomeDone = true;  // título de bienvenida: fuera para siempre (D7)
       FX.init();            // análisis de bajo dentro del gesto de usuario
       gate.classList.add('hidden');
@@ -2410,157 +2436,295 @@ window.__AVATAR_BLOB__ = "iVBORw0KGgoAAAANSUhEUgAAAeAAAAJACAIAAADaQiKxAAEAAElEQV
       btn.click();
     });
 
-    // LENTE DE CRISTAL (D7): el botón es un único elemento óptico que
-    // curva los glifos que pasan por detrás. Cada frame se copia del canvas
-    // ASCII la región bajo el botón EN REBANADAS verticales, desplazando
-    // cada una con una función radial respecto al centro óptico, y se le
-    // suma un canto cromático + realce. Canvas 2D: sin WebGL, sin texturas
-    // y sin leer el audio antes del play. El centro óptico sigue al
-    // puntero, el hover intensifica y el clic profundiza un instante.
-    // (la instancia se creo arriba, antes del listener de click)
+    // (la perla se creo arriba, antes del listener de click: es una escena
+    //  WebGL de 120 px dentro del boton que lleva el campo comprimido dentro,
+    //  con refraccion radial, dispersion en el canto y especular girando)
   }
 
-  // LENTE DE CRISTAL DEL BOTON (D7) -------------------------------------------------
-  // Un solo elemento optico: la region del canvas ASCII situada bajo el boton
-  // se vuelve a dibujar DESPLAZADA (refraccion por rebanadas verticales) y
-  // se le suma un canto cromatico + un realce, de modo que los glifos se
-  // leen a traves de cristal. Reposo: ~0.6 px de amplitud con respiracion
-  // lenta. Hover/foco: ~2.5 px + canto visible. El centro optico sigue al
-  // puntero. Al pulsar: profundizacion breve (confirmacion local del gesto).
-  // Sin WebGL, sin texturas y sin leer el audio antes del play. Si el campo
-  // esta vacio o negro, degrada a un disco de cristal sutil con su borde
-  // (nunca "roto"). Reduced-motion: estado estatico, sin desplazamiento
-  // continuo.
-  const LENS_IDLE = 0.6;     // px de refraccion en reposo
-  const LENS_HOVER = 2.5;    // px en hover / foco
-  const LENS_CLICK = 5.0;    // px en la profundizacion del clic
-  const LENS_SLICES = 28;    // rebanadas por frame (coste despreciable)
-  const LENS_TINT = [191, 112, 96];   // canto cromatico: color de portada
+  // PERLA DE CRISTAL DEL BOTON, EN THREE.JS (D7) --------------------------------
+  // El boton deja de pintarse a mano con canvas 2D: es una pequena escena WebGL
+  // (120 px) que se dibuja SOBRE los glifos, dentro del propio boton, y lleva
+  // el campo comprimido dentro como una canica. El shader hace lo que el 2D no
+  // podia: refraccion radial suave, dispersion cromatica en el canto,
+  // sombreado de esfera y un especular que recorre el canto a 60 fps — eso es
+  // lo que se lee como MOVIMIENTO y no como un circulo gris quieto.
+  //
+  // Coste y limites (decidido con el usuario):
+  //  · La perla abre su contexto WebGL al cargar la pagina, antes del play. La
+  //    capa de olas sigue siendo perezosa (se arma en el gesto del play) y su
+  //    contexto es el unico que queda: al arrancar, la perla se destruye y
+  //    libera el suyo (forceContextLoss).
+  //  · Three.js se vendoriza y se carga con un unico import compartido por
+  //    ambas capas; sin CDN ni red.
+  //  · Sin WebGL (o bajo file://, donde los modulos ES no importan) el boton
+  //    cae a una perla estatica de CSS: nunca se rompe ni ensucia.
+  //  · prefers-reduced-motion: se pinta un frame y el bucle para.
+  const BEAD_PX = 120;          // lado logico de la perla
+  const BEAD_TEX = 128;         // textura del campo (pequeña a proposito)
+  const BEAD_WIN = 200;         // ventana de campo que ve la perla, en px CSS
+  const BEAD_K_IDLE = 0.97;     // zoom relativo: <1 mas dentro, >1 mas comprimida
+  const BEAD_K_HOVER = 1.10;
+  const BEAD_K_CLICK = 1.20;
+  const BEAD_AMP_IDLE = 1.2;    // refraccion del canto (px)
+  const BEAD_AMP_HOVER = 2.6;
+  const BEAD_AMP_CLICK = 4.2;
+  const BEAD_CAUSTIC_MS = 5200; // periodo del especular
+  const BEAD_BREATH_MS = 1300;  // periodo de la respiracion (~8.2 s)
 
-  function setupGlassLens(btn, gate) {
+  const BEAD_VERT = `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`;
+
+  const BEAD_FRAG = `
+    precision highp float;
+    varying vec2 vUv;
+    uniform sampler2D uTex;
+    uniform float uK;        // zoom relativo de la imagen interior
+    uniform float uAmp;      // refraccion del canto
+    uniform float uTheta;    // angulo del especular
+    uniform float uPan;      // centro optico (sigue al puntero)
+    uniform float uPanY;
+    uniform float uI;        // intensidad (hover / foco)
+    uniform float uClick;    // profundizacion del clic
+    uniform vec3  uTint;     // color de portada
+    const float PI = 3.14159265;
+
+    vec2 mapUV(vec2 p, vec2 dir, float r, float scale, float ca) {
+      return vec2(uPan, uPanY) + (p * scale * (1.0 + ca)
+                                  + dir * (r * r) * uAmp * 0.055) * 0.5;
+    }
+
+    void main() {
+      vec2 p = vUv * 2.0 - 1.0;
+      float r = length(p);
+      if (r > 1.0) discard;
+      vec2 dir = r > 0.0001 ? p / r : vec2(0.0);
+
+      // Campo comprimido dentro, con dispersion cromatica que crece al canto.
+      float ca = (0.0015 + 0.0075 * r * r) * (0.5 + 0.9 * uI);
+      float cr = texture2D(uTex, mapUV(p, dir, r, uK,  ca)).r;
+      float cg = texture2D(uTex, mapUV(p, dir, r, uK, 0.0)).g;
+      float cb = texture2D(uTex, mapUV(p, dir, r, uK, -ca)).b;
+      vec3 col = vec3(cr, cg, cb);
+
+      // Volumen: la esfera se hunde hacia el borde (si no, parece una foto),
+      // pero sin comerse las letras del centro: el campo tiene que leerse.
+      col *= 1.22 * (1.0 - 0.58 * pow(r, 2.8));
+      col += vec3(0.055, 0.050, 0.047) * (1.0 - r);   // velo calido en el centro
+
+      // Especular que recorre el canto: arco ancho + punto de luz.
+      float ang = atan(p.y, p.x);
+      float da = abs(mod(ang - uTheta + PI, 2.0 * PI) - PI);
+      float arc = exp(-da * da * 13.0) * smoothstep(0.30, 0.97, r);
+      col += vec3(1.0) * arc * (0.22 + 0.26 * uI);
+      vec2 lp = vec2(cos(uTheta), sin(uTheta)) * 0.66;
+      float dl = length(p - lp);
+      col += vec3(1.0) * exp(-dl * dl * 300.0) * (0.60 + 0.35 * uI);
+
+      // Canto: banda cromatica de portada + un filo de luz blanco arriba del
+      // todo, que es lo que delata el vidrio.
+      float rim = smoothstep(0.86, 0.99, r);
+      col = mix(col, uTint, rim * (0.20 + 0.30 * uI + 0.22 * uClick));
+      col += uTint * rim * 0.26;
+      float edge = smoothstep(0.955, 1.0, r);
+      col += vec3(1.0) * edge * (0.22 + 0.18 * uI + 0.15 * uClick);
+
+      // El borde final se apaga para que no haya un corte circular.
+      float a = 0.95 * smoothstep(1.0, 0.955, r);
+      gl_FragColor = vec4(col, a);
+    }`;
+
+  function setupBead(btn, gate) {
     const cv = document.querySelector('.play-lens');
     if (!cv) return null;
-    const g = cv.getContext('2d', { alpha: true });
-    const S = cv.width;                       // 196 px, DPR 1 (es un detalle)
     const src = document.getElementById('ascii');
     let rm = false;
     try { rm = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
-    let ox = S / 2, oy = S / 2;               // centro optico (local)
-    let targetX = S / 2, targetY = S / 2;
-    let intensity = 0, targetI = 0;           // 0 reposo, 1 hover
-    let clickBoost = 0, clickT0 = -1e9;
-    let running = true, frames = 0, lastLen = 0, lastAmp = LENS_IDLE;
+    let renderer = null, scene = null, camera = null, mesh = null, mat = null;
+    let tex = null, field = null, fg = null, lastTex = 0;
+    let ox = 0, oy = 0, targetOx = 0, targetOy = 0;   // centro optico (px del canvas)
+    let intensity = 0, targetI = 0, clickT0 = -1e9;
+    let running = true, stopped = false, frames = 0;
+    let lastK = BEAD_K_IDLE, lastAmp = BEAD_AMP_IDLE, lastTheta = 2.1;
 
-    function nudge(x, y) {
+    // La perla lee el campo de glifos: se copia la ventana de BEAD_WIN px que
+    // rodea al boton a una textura pequena. Sin esto no habria "letras dentro".
+    function refreshField(now, k) {
+      if (now - lastTex < 42) return;              // ~24 fps: la textura pesa
+      lastTex = now;
       const b = btn.getBoundingClientRect();
-      const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
-      const dx = x - cx, dy = y - cy;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      // El centro optico persigue al puntero, limitado al radio util.
-      const lim = S * 0.22;
-      if (dist < lim * 2.2) {
-        targetX = S / 2 + Math.max(-lim, Math.min(lim, dx * 0.35));
-        targetY = S / 2 + Math.max(-lim, Math.min(lim, dy * 0.35));
-        targetI = Math.max(targetI, Math.max(0, 1 - dist / 240));
-      }
+      const box = src.getBoundingClientRect();
+      const dpr = src.width / Math.max(1, box.width);
+      const cx = (b.left + b.width / 2 - box.left) * dpr;
+      const cy = (b.top + b.height / 2 - box.top) * dpr;
+      const half = (BEAD_WIN / 2) * dpr;
+      fg.fillStyle = '#000';
+      fg.fillRect(0, 0, BEAD_TEX, BEAD_TEX);
+      fg.drawImage(src, cx - half, cy - half, half * 2, half * 2,
+                   0, 0, BEAD_TEX, BEAD_TEX);
+      tex.needsUpdate = true;
     }
-    function boost() { clickT0 = performance.now(); }
 
-    const onMove = (e) => { if (!gate.classList.contains('hidden')) nudge(e.clientX, e.clientY); };
+    function frame(now) {
+      if (!running || stopped || !renderer) return;
+      frames++;
+      // Centro optico siguiendo al puntero (dentro del canvas de 120 px).
+      ox += (targetOx - ox) * 0.12;
+      oy += (targetOy - oy) * 0.12;
+      intensity += (targetI - intensity) * 0.10;
+      const breath = rm ? 0 : (0.5 + 0.5 * Math.sin(now / BEAD_BREATH_MS));
+      const age = now - clickT0;
+      const click = age < 700 ? Math.sin(Math.PI * age / 700) : 0;
+      const k = BEAD_K_IDLE + (BEAD_K_HOVER - BEAD_K_IDLE) * intensity
+        + breath * 0.05 * (1 - intensity) + (BEAD_K_CLICK - BEAD_K_IDLE) * click;
+      const amp = BEAD_AMP_IDLE + (BEAD_AMP_HOVER - BEAD_AMP_IDLE) * intensity
+        + breath * 0.45 * (1 - intensity) + (BEAD_AMP_CLICK - BEAD_AMP_IDLE) * click;
+      const theta = rm ? 2.1 : (now / BEAD_CAUSTIC_MS) * Math.PI * 2;
+      lastK = k; lastAmp = amp; lastTheta = theta;
+      // El centro optico desplaza la imagen interior (y el puntero la mueve).
+      const u = mat.uniforms;
+      u.uK.value = k; u.uAmp.value = amp; u.uTheta.value = theta;
+      u.uI.value = intensity; u.uClick.value = click;
+      // El desplazamiento del centro se aplica moviendo la UV de la textura.
+      u.uPan.value = 0.5 + (targetOx - ox) / BEAD_PX * -0.22;
+      u.uPanY.value = 0.5 + (targetOy - oy) / BEAD_PX * -0.22;
+      refreshField(now, k);
+      renderer.render(scene, camera);
+      // Reduced-motion: un frame y el bucle para (nada de rAF perpetuo).
+      if (rm) { running = false; return; }
+      requestAnimationFrame(frame);
+    }
+
+    function build(THREE) {
+      renderer = new THREE.WebGLRenderer({
+        canvas: cv, antialias: false, alpha: true,
+        premultipliedAlpha: false, powerPreference: 'low-power',
+        // El buffer se conserva para que las sondas puedan leer los pixeles
+        // de la perla y verificar que se esta moviendo. En un canvas de
+        // 120x120 el coste es despreciable.
+        preserveDrawingBuffer: true
+      });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+      renderer.setSize(BEAD_PX, BEAD_PX, false);
+      renderer.setClearColor(0x000000, 0);
+      scene = new THREE.Scene();
+      camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+      camera.position.z = 2;
+      field = document.createElement('canvas');
+      field.width = BEAD_TEX; field.height = BEAD_TEX;
+      fg = field.getContext('2d', { alpha: false });
+      tex = new THREE.CanvasTexture(field);
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.generateMipmaps = false;
+      mat = new THREE.ShaderMaterial({
+        vertexShader: BEAD_VERT, fragmentShader: BEAD_FRAG,
+        uniforms: {
+          uTex: { value: tex },
+          uK: { value: BEAD_K_IDLE }, uAmp: { value: BEAD_AMP_IDLE },
+          uTheta: { value: 2.1 }, uI: { value: 0 }, uClick: { value: 0 },
+          uPan: { value: 0.5 }, uPanY: { value: 0.5 },
+          uTint: { value: new THREE.Color(191/255, 112/255, 96/255) }
+        },
+        transparent: true, depthWrite: false, depthTest: false
+      });
+      mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+      const cv0 = cv.getContext('webgl2') || cv.getContext('webgl');
+      if (!cv0) throw new Error('sin webgl');
+    }
+
+    // Un unico import para las dos capas 3D (perla y olas).
+    window.__threeModule().then((THREE) => {
+      if (stopped) return;
+      try { build(THREE); requestAnimationFrame(frame); }
+      catch (e) { btn.classList.add('no-gl3d'); }
+    }).catch(() => { btn.classList.add('no-gl3d'); });
+
+    const onMove = (e) => {
+      if (gate.classList.contains('hidden')) return;
+      const b = cv.getBoundingClientRect();
+      const dx = (e.clientX - b.left) - b.width / 2;
+      const dy = (e.clientY - b.top) - b.height / 2;
+      // La distancia se mide con el puntero REAL (no con el valor ya
+      // limitado): si no, un puntero lejano seguiría pareciendo "cerca" por el
+      // recorte y la perla no volvería al reposo.
+      targetI = Math.max(0, Math.min(1, 1 - Math.hypot(dx, dy) / 150));
+      const lim = BEAD_PX * 0.22;               // el centro no sale de la perla
+      if (Math.hypot(dx, dy) > 150) {          // puntero lejos: al centro
+        targetOx = 0; targetOy = 0;
+      } else {
+        targetOx = Math.max(-lim, Math.min(lim, dx));
+        targetOy = Math.max(-lim, Math.min(lim, dy));
+      }
+    };
     const onEnter = () => { targetI = 1; };
-    const onLeave = () => { targetI = 0; targetX = S / 2; targetY = S / 2; };
+    const onLeave = () => { targetI = 0; targetOx = 0; targetOy = 0; };
     window.addEventListener('pointermove', onMove, { passive: true });
     btn.addEventListener('pointerenter', onEnter, { passive: true });
     btn.addEventListener('pointerleave', onLeave, { passive: true });
     btn.addEventListener('focus', onEnter);
     btn.addEventListener('blur', onLeave);
 
-    function draw(now) {
-      if (!running) return;
-      if (gate.classList.contains('hidden')) {
-        // El play arranco: la lente se apaga y deja de costar.
-        running = false;
-        g.clearRect(0, 0, S, S);
-        return;
-      }
-      frames++;
-      // Interpolaciones suaves hacia el estado objetivo.
-      ox += (targetX - ox) * 0.12;
-      oy += (targetY - oy) * 0.12;
-      intensity += (targetI - intensity) * 0.10;
-      const breath = rm ? 0 : (0.5 + 0.5 * Math.sin(now / 900));
-      const clickAge = now - clickT0;
-      const click = clickAge < 700 ? Math.sin(Math.PI * clickAge / 700) : 0;
-      const amp = rm ? LENS_IDLE
-                     : LENS_IDLE + (LENS_HOVER - LENS_IDLE) * intensity + breath * 0.35 * (1 - intensity)
-                       + (LENS_CLICK - LENS_IDLE) * click;
-
-      const b = btn.getBoundingClientRect();
-      const stage = document.getElementById('stage').getBoundingClientRect();
-      const cvBox = document.getElementById('ascii').getBoundingClientRect();
-      // Region del canvas ASCII que hay bajo el boton (en coords de su bitmap).
-      const dpr = src.width / Math.max(1, cvBox.width);
-      const sx = (b.left + b.width / 2 - cvBox.left) * dpr - S / 2;
-      const sy = (b.top + b.height / 2 - cvBox.top) * dpr - S / 2;
-
-      g.clearRect(0, 0, S, S);
-      // 1) Refraccion: el campo bajo el boton, en rebanadas desplazadas.
-      const sw = S / LENS_SLICES;
-      for (let i = 0; i < LENS_SLICES; i++) {
-        const x0 = i * sw;
-        const dx = x0 - ox;                       // distancia al centro optico
-        // Cuanto mas lejos del centro, mas se comprime el campo (lente).
-        const t = Math.max(0, 1 - Math.abs(dx) / (S / 2));
-        const off = t * t * amp;                  // desplazamiento (px)
-        g.drawImage(src, sx + x0, sy, sw, S, x0 + off, 0, sw, S);
-      }
-      // 2) Cristal: velo tenue + canto cromatico + realce (especular).
-      const gr = g.createRadialGradient(ox, oy, S * 0.10, ox, oy, S * 0.5);
-      const glass = 0.05 + 0.05 * intensity;
-      gr.addColorStop(0, 'rgba(255,255,255,' + glass.toFixed(3) + ')');
-      gr.addColorStop(0.72, 'rgba(232,232,230,' + (glass * 0.35).toFixed(3) + ')');
-      gr.addColorStop(1, 'rgba(0,0,0,0)');
-      g.fillStyle = gr;
-      g.beginPath(); g.arc(ox, oy, S * 0.5, 0, Math.PI * 2); g.fill();
-      // Canto: anillo fino de color de portada (mas visible en hover).
-      g.strokeStyle = 'rgba(' + LENS_TINT[0] + ',' + LENS_TINT[1] + ',' + LENS_TINT[2] +
-                      ',' + (0.16 + 0.30 * intensity + 0.2 * click).toFixed(3) + ')';
-      g.lineWidth = 1.2;
-      g.beginPath(); g.arc(ox, oy, S * 0.5 - 1, 0, Math.PI * 2); g.stroke();
-      // Realce: un arco corto arriba-izquierda, como reflejo en el cristal.
-      g.strokeStyle = 'rgba(255,255,255,' + (0.20 + 0.35 * intensity).toFixed(3) + ')';
-      g.lineWidth = 2.2;
-      g.beginPath(); g.arc(ox, oy, S * 0.42, Math.PI * 1.05, Math.PI * 1.5); g.stroke();
-
-      lastAmp = amp;
-      // Reduced-motion: la lente queda REALMENTE estatica — se pinta una vez
-      // y el bucle para (solo se repinta si cambia el layout). Sin esto seria
-      // un rAF perpetuo pintando siempre lo mismo.
-      if (rm) { running = false; return; }
-      requestAnimationFrame(draw);
-    }
-    requestAnimationFrame(draw);
-    // Bajo reduced-motion, un repintado por cambio de layout (resize) basta.
-    window.addEventListener('resize', () => {
-      if (rm && !running && !gate.classList.contains('hidden')) {
-        running = true; requestAnimationFrame(draw);
-      }
-    }, { passive: true });
-
     return {
-      boost: boost,
+      boost: function () { clickT0 = performance.now(); },
+      // Muestreo de la perla para verificacion: lee el frame actual del
+      // contexto (por eso preserveDrawingBuffer va activado). Devuelve la
+      // cobertura, el croma del canto y una firma para comparar dos
+      // instantes: si la firma no cambia, la perla esta quieta.
+      sample: function () {
+        if (!renderer) return null;
+        try {
+          const gl = renderer.getContext();
+          const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+          const px = new Uint8Array(w * h * 4);
+          gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+          let ink = 0, n = 0, sum = 0, tint = 0, sig = 0;
+          for (let y = 0; y < h; y += 2) for (let x = 0; x < w; x += 2) {
+            const i = (y * w + x) * 4;
+            const a = px[i + 3];
+            n++;
+            if (a > 10) {
+              ink++;
+              const m = (px[i] + px[i + 1] + px[i + 2]) / 3;
+              sum += m;
+              if (px[i] - px[i + 2] > 6) tint++;         // canto de portada
+              sig = (sig * 31 + ((px[i] >> 3) << 10 | (px[i + 1] >> 3) << 5 | (px[i + 2] >> 3))) >>> 0;
+            }
+          }
+          return { w: w, h: h, n: n, ink: ink, cov: ink / n,
+                   mean: ink ? sum / ink : 0, tint: tint, sig: sig };
+        } catch (e) { return null; }
+      },
+      // Al arrancar el play la perla se retira y libera su contexto: a partir de
+      // aqui la unica capa 3D es la de las olas, debajo de los glifos.
+      stop: function () {
+        stopped = true; running = false;
+        try {
+          if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
+          if (mat) mat.dispose();
+          if (tex) tex.dispose();
+          if (renderer) {
+            renderer.dispose();
+            const gl = renderer.getContext();
+            const lose = gl && gl.getExtension('WEBGL_lose_context');
+            if (lose) lose.loseContext();
+          }
+        } catch (e) { /* decorativo: nunca rompe el play */ }
+        renderer = null; mesh = null; mat = null; tex = null;
+      },
       // Estado para verificacion.
       stats: function () {
-        return { frames: frames, ox: +ox.toFixed(1), oy: +oy.toFixed(1),
-                 intensity: +intensity.toFixed(3), running: running,
-                 amp: +lastAmp.toFixed(2), rm: rm, size: S,
-                 // Desplazamiento por rebanada (la refraccion, en px): es la
-                 // forma radial que las sondas pueden comprobar sin pixels.
-                 offsets: Array.from({ length: LENS_SLICES }, (_, i) => {
-                   const dx = (i + 0.5) * (S / LENS_SLICES) - ox;
-                   const t = Math.max(0, 1 - Math.abs(dx) / (S / 2));
-                   return +(t * t * lastAmp).toFixed(2);
-                 }) };
+        return { frames: frames, running: running, stopped: stopped,
+                 ready: !!renderer, k: +lastK.toFixed(3), amp: +lastAmp.toFixed(2),
+                 theta: +lastTheta.toFixed(2), intensity: +intensity.toFixed(3),
+                 targetI: +targetI.toFixed(3),
+                 ox: +ox.toFixed(1), oy: +oy.toFixed(1), rm: rm,
+                 size: BEAD_PX, win: BEAD_WIN };
       }
     };
   }
