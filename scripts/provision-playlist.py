@@ -8,8 +8,12 @@ SoFi Stadium)" para xatspace-thony.
 - Descarga: yt-dlp (instalado global, actualizado) + ffmpeg -> mp3 ~192kbps.
 - Organizacion: assets/tracks/<md5(video_id)[:12]>.mp3 (nombres OPACOS
   deterministas; la identidad real vive en el manifest y en los tags ID3),
-  assets/cover.jpg, assets/playlist.json (canonico) y assets/playlist.js
-  (manifest para el runtime, evita fetch en file://).
+  assets/cover.jpg y el manifest en src/playlist.json (canonico) +
+  src/playlist.js (modulo ES que empaqueta Vite, ya no hace falta fetch).
+
+  Ojo: assets/tracks/ y assets/cover.jpg siguen en la RAIZ porque GitHub Pages
+  publica la raiz de main; el codigo fuente vive en src/ y la build escribe
+  el index.html + el bundle en la raiz (npm run build).
 
 Uso:
   python3 scripts/provision-playlist.py             # descarga todo
@@ -27,7 +31,8 @@ import urllib.request
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent.parent          # raiz del sitio (xatspace-thony)
-ASSETS = BASE / "assets"
+ASSETS = BASE / "assets"          # assets de RUNTIME (los publica Pages)
+SRC = BASE / "src"                # codigo fuente (Vite construye desde aqui)
 TRACKS = ASSETS / "tracks"
 PLAYLIST_URL = "https://www.youtube.com/playlist?list=PLVOXUojQhsNopodrs_5D_BLVIHpfox0UN"
 SPOTIFY_ALBUM = "1OARrXe5sB0gyy3MhQ8h92"               # "Live At SoFi Stadium" (verificado por oEmbed)
@@ -170,11 +175,15 @@ def build_manifest(rows, cover_path):
             for r in rows
         ],
     }
-    (ASSETS / "playlist.json").write_text(
+    SRC.mkdir(parents=True, exist_ok=True)
+    (SRC / "playlist.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    (ASSETS / "playlist.js").write_text(
-        "window.__PLAYLIST__ = " + json.dumps(manifest, ensure_ascii=False) + ";",
+    # Modulo ES: Vite lo empaqueta dentro del bundle, asi que el manifest deja
+    # de ser una peticion aparte y no puede llegar tarde a la UI.
+    (SRC / "playlist.js").write_text(
+        "const PLAYLIST = " + json.dumps(manifest, ensure_ascii=False) + ";\n\n"
+        "window.__PLAYLIST__ = PLAYLIST;\nexport default PLAYLIST;\n",
         encoding="utf-8",
     )
     return manifest
@@ -223,7 +232,8 @@ def main():
     log(f"\nlisto: {len(ok)}/{len(rows)} tracks | total real: {sum(tot) // 60} min")
     if len(ok) < len(rows):
         log("aviso: algunos tracks fallaron; genera manifest solo con los OK")
-    log(f"manifest: {ASSETS / 'playlist.json'} y {ASSETS / 'playlist.js'}")
+    log(f"manifest: {SRC / 'playlist.json'} y {SRC / 'playlist.js'}")
+    log("siguiente paso: npm run build (regenera el index.html de la raiz)")
     log(f"artista: {manifest['artist']} | album: {manifest['title']}")
 
 
