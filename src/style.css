@@ -1,0 +1,533 @@
+:root{
+    --ink:#e8e8e6;
+    --ink-dim:#7a7a78;
+    --ink-faint:#4a4a48;
+    --bg:#000000;
+    --accent:#c9c9c4;
+    --ui-bg: rgba(8,8,8,0.66);
+    --ui-bg-solid: rgba(10,10,10,0.86);
+    --ui-border: rgba(255,255,255,0.11);
+    --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    --gothic: 'UnifrakturMaguntia', 'JetBrains Mono', serif;
+    --serif-italic: 'Cormorant Garamond', Georgia, serif;
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{
+    height:100%; margin:0; padding:0;
+    background:var(--bg);
+    overflow:hidden;
+    font-family: var(--mono);
+    -webkit-font-smoothing:antialiased;
+  }
+
+  #stage{
+    position:fixed; inset:0;
+    background:#000;
+  }
+
+  /* Capa 3D (Three.js) DEBAJO del campo de glifos (D1): el canvas WebGL
+     pinta las olas/halos sobre negro y el canvas ASCII queda transparente
+     donde no hay glifo ni velo, de modo que la ola se ve A TRAVÉS del
+     campo. Ambos comparten tamaño y DPR; el fondo negro vive en la capa
+     3D (y en #stage como red de seguridad antes de que exista contexto). */
+  canvas#gl,
+  canvas#ascii{
+    position:absolute; inset:0;
+    display:block;
+    width:100vw; height:100vh;
+  }
+  canvas#gl{ z-index:0; }
+  canvas#ascii{
+    z-index:1;
+    image-rendering:pixelated;
+    object-fit: cover;
+  }
+
+  /* Vignette eliminada: el fondo ASCII se ve limpio en todo el encuadre,
+     sin ningún velo oscuro en los bordes. */
+
+  /* ================= PLAY GATE (splash) ================= */
+  #playGate{
+    position:fixed; inset:0; z-index:50;
+    display:flex; align-items:center; justify-content:center;
+    background: radial-gradient(circle at center, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0.12) 30%, transparent 62%);
+    transition: opacity .7s ease, visibility .7s ease;
+  }
+  #playGate.hidden{ opacity:0; visibility:hidden; pointer-events:none; }
+
+  .play-wrap{
+    display:flex; flex-direction:column; align-items:center; gap:16px;
+  }
+
+  #playBtn{
+    position:relative;
+    width:96px; height:96px;
+    border-radius:50%;
+    background:transparent;
+    border:none;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+    padding:0;
+    -webkit-tap-highlight-color:transparent;
+  }
+
+  /* Núcleo central: disco sin vidrio — transparente con hairline (mismo
+     lenguaje editorial que la card del dock); el repel mantiene la zona
+     alrededor del botón tranquila. */
+  #playBtn::before{
+    content:'';
+    position:absolute;
+    top:50%; left:50%;
+    transform: translate(-50%, -50%);
+    width:58px; height:58px;
+    border-radius:50%;
+    background: rgba(0,0,0,0.35);
+    border:1px solid rgba(232,232,230,0.16);
+    transition: background .25s ease, border-color .25s ease, width .25s ease, height .25s ease;
+  }
+
+  /* Botón play como PERLA DE CRISTAL (D7): una escena WebGL de 120 px
+     DENTRO del botón (canvas .play-lens) que lleva el campo de glifos
+     comprimido, como mirar a través de una canica: refracción radial,
+     dispersión cromática en el canto, sombreado de esfera y un especular
+     que recorre el borde. El shader se encarga, así que el movimiento es
+     real a 60 fps en vez de un desplazamiento sub-pixel.
+     Tamaño contenido a propósito (120 px): no toca los números del título
+     de bienvenida ni la etiqueta "escuchar".
+     Si no hay WebGL (o bajo file://, donde los módulos ES no importan), el
+     botón recibe la clase .no-gl3d y cae a una perla estática de CSS: nunca
+     se rompe ni queda un agujero. */
+  .play-lens{
+    position:absolute; top:50%; left:50%;
+    width:120px; height:120px;
+    margin:-60px 0 0 -60px;
+    border-radius:50%;
+    pointer-events:none;
+    z-index:0;
+  }
+  #playBtn.no-gl3d .play-lens{
+    background:
+      radial-gradient(circle at 36% 30%,
+        rgba(232,232,230,0.13) 0%, rgba(232,232,230,0.05) 26%,
+        rgba(0,0,0,0.30) 62%, rgba(0,0,0,0.55) 100%);
+    box-shadow: inset 0 0 0 1px rgba(191,112,96,0.22);
+    /* Sin WebGL la perla NO puede quedarse quieta: el degradado gira con el
+       mismo periodo del especular del shader (5.2 s) para que el reflejo siga
+       recorriendo el canto. Es el degradado que se ve en navegadores donde el
+       contexto 3D no arranca (Brave con shields estrictos, WebGL bloqueado,
+       file:// donde no importan los modulos ES): muerto parecia un bug. */
+    animation: beadSweep 5.2s linear infinite;
+  }
+  @keyframes beadSweep{
+    from{ transform: rotate(0deg); }
+    to  { transform: rotate(360deg); }
+  }
+  @media (prefers-reduced-motion: reduce){
+    #playBtn.no-gl3d .play-lens{ animation: none; }
+  }
+  /* Aro hairline: el contorno del cristal (el cuerpo es el canvas). */
+  .play-lens-edge{
+    position:absolute; top:50%; left:50%;
+    width:104px; height:104px;
+    margin:-52px 0 0 -52px;
+    border-radius:50%;
+    border:1px solid rgba(232,232,230,0.10);
+    pointer-events:none;
+    z-index:2;
+    transition: border-color .3s ease, opacity .3s ease;
+    opacity:.7;
+  }
+  #playBtn:hover .play-lens-edge,
+  #playBtn:focus-visible .play-lens-edge{
+    border-color: rgba(232,232,230,0.34);
+    opacity:1;
+  }
+  @media (prefers-reduced-motion: reduce){
+    .play-lens{ opacity:.9; }
+  }
+
+  .play-icon{
+    position:relative;
+    z-index:1;
+    transition: transform .25s ease;
+  }
+
+  .play-label{
+    display:flex; flex-direction:column; align-items:center; gap:7px;
+  }
+  .play-word{
+    font-family: var(--serif-italic);
+    font-style: italic;
+    font-weight:500;
+    font-size:16px;
+    line-height:1;
+    color:var(--ink-dim);
+    transition: color .25s ease;
+    user-select:none;
+  }
+  .play-hint{
+    font-family: var(--mono);
+    font-size:8.5px;
+    letter-spacing:.38em;
+    padding-left:.38em; /* compensa el letter-spacing para centrar ópticamente */
+    color:var(--ink-faint);
+    transition: color .25s ease;
+    user-select:none;
+  }
+
+  #playBtn:hover::before{
+    background: rgba(0,0,0,0.6);
+    border-color: rgba(232,232,230,0.38);
+    width:62px; height:62px;
+  }
+  #playBtn:hover .play-icon{ transform: scale(1.08); }
+  .play-wrap:hover .play-word{ color:var(--ink); }
+  .play-wrap:hover .play-hint{ color:var(--ink-dim); }
+
+  #playBtn:active .play-icon{ transform: scale(0.94); }
+  #playBtn:active::before{ width:56px; height:56px; }
+
+  /* ================= DOCK (avatar + card) ================= */
+  #dock{
+    position:fixed;
+    left:0; right:0; bottom:0;
+    z-index:20;
+    display:flex; justify-content:center;
+    padding: 0 18px;
+    padding-bottom: 0;
+    max-height:0;
+    overflow:hidden;
+    visibility:hidden;
+    opacity:0; transform: translateY(14px);
+    transition: opacity .35s ease, transform .35s ease, max-height .35s ease, padding-top .35s ease, padding-bottom .35s ease, visibility 0s linear .35s;
+    pointer-events:none;
+  }
+  #dock.show{
+    opacity:1; transform:translateY(0);
+    /* El dock (scrim incluido) NO captura clics: solo la card. Así la
+       franja inferior del panel (pl-bar, tracklist) es clicable aunque
+       la caja del dock la solape visualmente por z-index. */
+    pointer-events:none;
+    visibility:visible;
+    max-height:210px;
+    padding-top:46px;
+    padding-bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+    /* Scrim editorial: la composición de la card flota sobre el ASCII
+       sin caja de vidrio; el degradado se recorta (y anima) con el
+       overflow/max-height del propio dock. */
+    background: linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0.42) 55%, rgba(0,0,0,0));
+    transition: opacity .35s ease, transform .35s ease, max-height .35s ease, padding-top .35s ease, padding-bottom .35s ease, visibility 0s;
+  }
+  #dock.show .card{ pointer-events:auto; }
+  /* Auto-hide: una vez mostrado, si el mouse deja de moverse el dock se
+     desvanece (transición más lenta, sensación de "asentarse"); al mover
+     el mouse vuelve a aparecer casi al instante. */
+  #dock.show.idle{
+    opacity:0;
+    max-height:0;
+    padding-top:0;
+    padding-bottom:0;
+    visibility:hidden;
+    transition: opacity .35s ease, transform .35s ease, max-height .35s ease, padding-bottom .35s ease, visibility 0s linear .35s;
+    pointer-events:none;
+  }
+
+  /* Card editorial: sin caja de vidrio — la composición flota sobre el
+     ASCII con el scrim del #dock; la jerarquía la hace la tipografía. */
+  .card{
+    display:flex; align-items:center; gap:14px;
+    background:transparent;
+    padding:10px 16px 10px 8px;
+    max-width:min(92vw, 430px);
+  }
+
+  .avatar-wrap{
+    position:relative;
+    width:44px; height:44px;
+    border-radius:50%;
+    overflow:hidden;
+    flex:none;
+    border:1px solid rgba(232,232,230,0.22);
+    background:#0a0a0a;
+  }
+  .avatar-wrap img{
+    width:100%; height:100%;
+    object-fit:cover;
+    object-position: 50% 22%;
+    display:block;
+    /* Duotono: escala de grises con tinta cálida de la paleta de portada */
+    filter: grayscale(1) sepia(0.22) contrast(1.04);
+  }
+
+  .card-text{
+    display:flex; flex-direction:column;
+    gap:3px;
+    min-width:0;
+  }
+
+  .name-row{
+    display:flex; align-items:baseline; gap:9px;
+    cursor:default;
+    user-select:none;
+  }
+
+  .name-glitch{
+    font-family: var(--gothic);
+    font-size:30px;
+    line-height:1;
+    color:var(--ink);
+    letter-spacing:.02em;
+    white-space:nowrap;
+  }
+  .name-glitch .ch{ display:inline-block; }
+
+  .meta-row{
+    font-family: var(--mono);
+    font-size:9.5px;
+    text-transform:uppercase;
+    color:var(--ink-dim);
+    letter-spacing:.22em;
+    display:flex; align-items:center; gap:8px;
+    white-space:nowrap;
+  }
+  .meta-row .flag{
+    width:13px; height:9px;
+    border-radius:1.5px;
+    overflow:hidden;
+    display:inline-block;
+    flex:none;
+    opacity:.85;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.07);
+  }
+  .meta-row .flag svg{ display:block; width:100%; height:100%; }
+  .meta-row .dot{ opacity:.4; }
+
+  .quote-line{
+    font-family: var(--serif-italic);
+    font-style: italic;
+    font-weight:500;
+    font-size:14.5px;
+    line-height:1.38;
+    color:var(--ink);
+    letter-spacing:.01em;
+    margin-top:3px;
+  }
+
+  .card-side{
+    flex:none;
+    display:flex; align-items:center;
+    padding-left:10px;
+    margin-left:2px;
+    border-left:1px solid rgba(232,232,230,0.12);
+  }
+  .spotify-toggle{
+    width:30px; height:30px; border-radius:50%;
+    border:1px solid rgba(232,232,230,0.16);
+    background:transparent;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+    color:var(--ink-dim);
+    transition: border-color .2s ease, color .2s ease;
+  }
+  .spotify-toggle:hover{ border-color:rgba(232,232,230,0.4); color:var(--ink); }
+  .spotify-toggle.on{ color:var(--ink); border-color:rgba(232,232,230,0.45); }
+
+  /* ================= Spotify panel =================
+     Alturas sincronizadas con el embed (ajustar aqui si Spotify cambia):
+     desktop expandido 352px / compacto 152px / mobile 300px. */
+  #spotifyPanel{
+    position:fixed;
+    left:0; right:0;
+    bottom:0;
+    z-index:19;
+    display:flex; justify-content:center;
+    padding: 0 18px;
+    padding-bottom: 0;
+    max-height:0;
+    opacity:0;
+    visibility:hidden;
+    overflow:hidden;
+    transition: max-height .5s cubic-bezier(.22,.8,.32,1), opacity .4s ease, padding-bottom .5s ease, visibility 0s linear .5s;
+    pointer-events:none;
+  }
+  #spotifyPanel.show{
+    padding-bottom: calc(186px + env(safe-area-inset-bottom, 0px));
+    max-height:calc(352px + 186px + 24px);
+    opacity:1;
+    visibility:visible;
+    transition: max-height .5s cubic-bezier(.22,.8,.32,1), opacity .4s ease, padding-bottom .5s ease, visibility 0s;
+    pointer-events:auto;
+  }
+  #spotifyPanel.show.idle{
+    opacity:0;
+    max-height:0;
+    padding-bottom:0;
+    visibility:hidden;
+    pointer-events:none;
+    transition: max-height .5s cubic-bezier(.22,.8,.32,1), opacity 1.1s ease, padding-bottom .5s ease, visibility 0s linear .5s;
+  }
+  /* Hover-reveal: fondo visible, cards decorativas ocultas y colapsadas */
+  #dock.show.reveal-hidden{
+    opacity:0;
+    max-height:0;
+    padding-top:0;
+    padding-bottom:0;
+    visibility:hidden;
+    pointer-events:none;
+    transition: opacity .35s ease, transform .35s ease, max-height .35s ease, padding-bottom .35s ease, visibility 0s linear .35s;
+  }
+  /* Toast "ahora se esta reproduciendo": simulado en pagina, sin Notification API */
+  #nowPlaying{
+    position:fixed; right:18px; z-index:30;
+    bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+    display:flex; align-items:center; gap:10px;
+    max-width:min(86vw, 300px);
+    background:var(--ui-bg-solid);
+    border:1px solid var(--ui-border);
+    border-radius:12px;
+    padding:9px 12px 9px 9px;
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    box-shadow: 0 18px 50px rgba(0,0,0,0.75);
+    opacity:0; transform:translateY(10px);
+    transition: opacity .3s ease, transform .3s ease;
+    pointer-events:none;
+  }
+  #nowPlaying.show{ opacity:1; transform:translateY(0); pointer-events:auto; }
+  #nowPlaying img{ width:40px; height:40px; border-radius:8px; object-fit:cover; flex:none; background:#0a0a0a; }
+  #nowPlaying .np-sub{ font-size:9.5px; letter-spacing:.14em; color:var(--ink-dim); }
+  #nowPlaying .np-title{ font-size:12px; color:var(--ink); margin-top:2px; }
+  #nowPlaying .np-artist{ font-size:10px; color:var(--ink-dim); margin-top:1px; }
+  .spotify-frame-wrap{
+    width:min(92vw, 420px);
+    height:352px;
+    border-radius:12px;
+    overflow:hidden;
+    line-height:0;
+    box-shadow: 0 18px 50px rgba(0,0,0,0.75), 0 0 0 1px rgba(255,255,255,0.06);
+    background:#000;
+    border:1px solid var(--ui-border);
+    transition: box-shadow .18s ease, border-color .18s ease, height .45s cubic-bezier(.22,.8,.32,1);
+  }
+  /* Halo reactivo solido: misma silueta rounded-rect, mas elevacion */
+  .spotify-frame-wrap.halo-near{
+    box-shadow: 0 26px 70px rgba(0,0,0,0.85), 0 0 0 1px rgba(232,232,230,0.22);
+    border-color:rgba(255,255,255,0.28);
+  }
+  /* Player local (reemplaza al iframe): flex column, cabecera + lista + barra */
+  .pl-player{
+    display:flex;
+    flex-direction:column;
+    line-height:normal;
+    height:100%;
+    background:#000;
+  }
+  .pl-header{
+    display:flex; align-items:center; gap:10px;
+    padding:12px 14px;
+    flex:none;
+    border-bottom:1px solid rgba(255,255,255,0.07);
+  }
+  #plCover{
+    width:46px; height:46px; border-radius:8px; object-fit:cover; flex:none;
+    background:#0a0a0a;
+  }
+  .pl-title{ font-size:13px; color:var(--ink); font-weight:600; line-height:1.25; }
+  .pl-artist{ font-size:10.5px; color:var(--ink-dim); margin-top:2px; }
+  .pl-list{
+    flex:1; min-height:0;
+    margin:0; padding:4px 6px;
+    list-style:none;
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:thin;
+    scrollbar-color:rgba(232,232,230,0.16) transparent;
+  }
+  /* Scrollbar minimalista (solo tracklist): thumb fino translucido, track invisible */
+  .pl-list::-webkit-scrollbar{ width:5px; }
+  .pl-list::-webkit-scrollbar-track{ background:transparent; }
+  .pl-list::-webkit-scrollbar-thumb{
+    background:rgba(232,232,230,0.16);
+    border-radius:999px;
+    border:1px solid transparent;
+    background-clip:padding-box;
+  }
+  .pl-list::-webkit-scrollbar-thumb:hover{ background:rgba(232,232,230,0.30); background-clip:padding-box; }
+  .pl-list li{
+    display:flex; align-items:center; gap:10px;
+    padding:6px 8px; border-radius:8px;
+    cursor:pointer;
+    transition: background .15s ease;
+  }
+  .pl-list li:hover{ background:rgba(255,255,255,0.05); }
+  .pl-list li.active{ background:rgba(255,255,255,0.08); }
+  .pl-num{
+    flex:none; width:16px; text-align:right;
+    font-size:10.5px; color:var(--ink-dim); font-variant-numeric:tabular-nums;
+  }
+  .pl-list li.active .pl-num{ color:var(--ink); }
+  .pl-tit{
+    flex:1; min-width:0;
+    font-size:11.5px; color:var(--ink);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .pl-list li.active .pl-tit{ color:#1db954; }
+  .pl-dur{
+    flex:none; font-size:10.5px; color:var(--ink-dim); font-variant-numeric:tabular-nums;
+  }
+  .pl-bar{
+    flex:none;
+    display:flex; align-items:center; gap:10px;
+    padding:8px 12px;
+    border-top:1px solid rgba(255,255,255,0.07);
+  }
+  .pl-play{
+    width:32px; height:32px; border-radius:50%; flex:none;
+    border:1px solid var(--ui-border);
+    background:rgba(255,255,255,0.02);
+    color:var(--ink); cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    transition: border-color .2s ease, background .2s ease;
+  }
+  .pl-play:hover{ border-color:rgba(255,255,255,0.3); background:rgba(255,255,255,0.05); }
+  .pl-barinfo{ min-width:0; flex:1; }
+  .pl-bar-title{ font-size:11.5px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pl-bar-time{ font-size:10px; color:var(--ink-dim); margin-top:1px; font-variant-numeric:tabular-nums; }
+  /* Op3 hover-expand: reposo compacto 152px (cabecera), hover/focus/tap expande a 352px */
+  #spotifyPanel.compact .spotify-frame-wrap{
+    height:152px;
+  }
+  #spotifyPanel.compact .spotify-frame-wrap:hover,
+  #spotifyPanel.compact .spotify-frame-wrap:focus-within,
+  #spotifyPanel.compact.expanded .spotify-frame-wrap{
+    height:352px;
+  }
+
+  @media (max-width:480px){
+    .card{ padding:8px 12px 8px 6px; gap:11px; }
+    .avatar-wrap{ width:38px; height:38px; }
+    .name-glitch{ font-size:24px; }
+    .quote-line{ font-size:12.5px; }
+    #spotifyPanel.show{ padding-bottom: calc(170px + env(safe-area-inset-bottom, 0px)); max-height:calc(300px + 170px + 24px); }
+    .spotify-frame-wrap{ height:300px; }
+    #spotifyPanel.compact .spotify-frame-wrap{ height:140px; }
+    #spotifyPanel.compact .spotify-frame-wrap:hover,
+    #spotifyPanel.compact .spotify-frame-wrap:focus-within,
+    #spotifyPanel.compact.expanded .spotify-frame-wrap{ height:300px; }
+  }
+
+  #loader{
+    position:fixed; inset:0; z-index:100;
+    background:#000; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:14px;
+    color:var(--ink-dim); font-size:11px; letter-spacing:.16em;
+    transition: opacity .6s ease;
+  }
+  #loader .bar{
+    width:220px; height:2px; background:rgba(255,255,255,0.12);
+    overflow:hidden; border-radius:2px;
+  }
+  #loader .fill{
+    height:100%; width:0%; background:var(--ink);
+    transition: width .15s ease;
+  }
+  #loader.hidden{ opacity:0; pointer-events:none; }
