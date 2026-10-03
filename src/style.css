@@ -25,20 +25,12 @@
     background:#000;
   }
 
-  /* Capa 3D (Three.js) DEBAJO del campo de glifos (D1): el canvas WebGL
-     pinta las olas/halos sobre negro y el canvas ASCII queda transparente
-     donde no hay glifo ni velo, de modo que la ola se ve A TRAVÉS del
-     campo. Ambos comparten tamaño y DPR; el fondo negro vive en la capa
-     3D (y en #stage como red de seguridad antes de que exista contexto). */
-  canvas#gl,
+  /* El canvas ASCII pinta tambien el fondo negro (ya no hay capa 3D debajo);
+     #stage conserva el negro como red de seguridad antes del primer frame. */
   canvas#ascii{
-    position:absolute; inset:0;
+    position:absolute; inset:0; z-index:1;
     display:block;
     width:100vw; height:100vh;
-  }
-  canvas#gl{ z-index:0; }
-  canvas#ascii{
-    z-index:1;
     image-rendering:pixelated;
     object-fit: cover;
   }

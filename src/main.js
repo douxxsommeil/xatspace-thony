@@ -5,15 +5,14 @@
    asi que el DOM ya esta listo cuando esto corre):
 
      1. style.css        -> Vite lo extrae a assets/app.<hash>.css
-     2. playlist.js      -> define window.__PLAYLIST__ (manifest del concierto)
-     3. ascii-engine.js  -> campo de glifos + capa 3D + analisis de audio
-     4. overlay.js       -> avatar, dock, play-gate, panel de la playlist
+     2. ascii-engine.js  -> campo de glifos + efectos de ritmo
+     3. overlay.js       -> avatar, dock, play-gate, auto-hide
+                            (importa player.js y bead.js)
 
-   El motor y el overlay NO se importan entre si: se comunican por los pocos
-   puentes explicitos en window (__FX, __GL3D, __gl3dBoot, __threeModule,
-   __updateRepelRects), igual que cuando eran dos <script> separados.
+   El motor y el reproductor se hablan por UN objeto compartido
+   (beat-sync.js): el reproductor dice que pista suena y en que milisegundo; el
+   motor lee los mapas de ritmo precalculados (assets/beatmaps/*.json).
    ========================================================================= */
 import './style.css';
-import './playlist.js';
 import './ascii-engine.js';
 import './overlay.js';
