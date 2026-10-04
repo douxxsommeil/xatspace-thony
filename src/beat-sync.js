@@ -15,6 +15,13 @@ export const sync = {
   welcomeDone: false,
 
   /**
+   * Interruptor de las animaciones de la musica (boton junto al de ocultar el
+   * reproductor). Apagado: el motor no dispara ni dibuja ningun efecto de
+   * ritmo; el campo de glifos y la musica siguen igual. Lo escribe overlay.js.
+   */
+  fxEnabled: true,
+
+  /**
    * () => { key, ms } | null
    *   key  id de la pista que suena (nombre del mp3 sin extension)
    *   ms   posicion de reproduccion en milisegundos (suavizada)

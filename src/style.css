@@ -308,6 +308,7 @@
   .card-side{
     flex:none;
     display:flex; align-items:center;
+    gap:8px;
     padding-left:10px;
     margin-left:2px;
     border-left:1px solid rgba(232,232,230,0.12);
@@ -323,6 +324,11 @@
   }
   .spotify-toggle:hover{ border-color:rgba(232,232,230,0.4); color:var(--ink); }
   .spotify-toggle.on{ color:var(--ink); border-color:rgba(232,232,230,0.45); }
+  .spotify-toggle:focus-visible{ outline:1px solid rgba(232,232,230,0.6); outline-offset:2px; }
+
+  /* Boton de animaciones de la musica: ecualizador; tachado cuando esta apagado. */
+  .fx-toggle .fx-slash{ opacity:0; transition: opacity .2s ease; }
+  .fx-toggle:not(.on) .fx-slash{ opacity:1; }
 
   /* ================= Spotify panel =================
      Alturas sincronizadas con el embed (ajustar aqui si Spotify cambia):

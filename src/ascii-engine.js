@@ -1,7 +1,7 @@
 import pako from 'pako';
 import { CHARS, RAMP_LEN, rampIndex, createRng, clamp } from './ramp.js';
 import { sync } from './beat-sync.js';
-import { BeatConductor } from './beatmap.js';
+import { BeatConductor, beatmapStatus } from './beatmap.js';
 import { BeatFx, LANE, FX_STYLE, buildStyles, levelOf } from './beat-fx.js';
 import { TitleMask } from './title-mask.js';
 import { hasRepel, isExcluded, updateRepelRects } from './repel.js';
@@ -167,9 +167,14 @@ function drawFrame(ts) {
   let fxOn = false;
   try {
     frameTs = ts;
-    conductor.update(sync.read ? sync.read(ts) : null);
-    fx.frame(ts, w, h, cellPx);
-    fxOn = fx.active;
+    if (sync.fxEnabled) {
+      conductor.update(sync.read ? sync.read(ts) : null);
+      fx.frame(ts, w, h, cellPx);
+      fxOn = fx.active;
+    } else if (fx.active) {          // se acaba de apagar: limpiar lo que quedaba en vuelo
+      fx.clear();
+      conductor.reset();
+    }
   } catch (e) {
     fx.clear();
     conductor.reset();
@@ -293,6 +298,32 @@ function paintOps(n, sparkFirst) {
 }
 
 // ---------------------------------------------------------------------------
+// Diagnostico: anade ?fxdebug a la URL para ver, en una esquina, si el mapa de
+// ritmo cargo, si el reloj del audio avanza y cuantos golpes se disparan.
+// ---------------------------------------------------------------------------
+let hud = null, hudNext = 0;
+function createHud() {
+  const el = document.createElement('pre');
+  el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:99999;margin:0;padding:6px 8px;' +
+    'font:11px/1.35 monospace;color:#9f9;background:rgba(0,0,0,.75);pointer-events:none;white-space:pre';
+  document.body.appendChild(el);
+  return el;
+}
+function updateHud(ts) {
+  if (!hud || ts < hudNext) return;
+  hudNext = ts + 250;
+  const sample = sync.read ? sync.read(ts) : null;
+  hud.textContent =
+    'beat-fx  boton: ' + (sync.fxEnabled ? 'ON' : 'OFF') + '  modo: ' + (fx.calm ? 'calmo (reduced-motion)' : 'completo') + '\n' +
+    'audio:   ' + (sample ? sample.key + '  ' + Math.round(sample.ms) + ' ms' : 'sin reproducir / pausado') + '\n' +
+    'mapa:    ' + (sample ? beatmapStatus(sample.key) : '-') + '\n' +
+    'disparados  kick ' + conductor.fired[0] + '  bass ' + conductor.fired[1] +
+    '  mid ' + conductor.fired[2] + '  hi ' + conductor.fired[3] + '\n' +
+    'activos     kick ' + fx.ripples.length + '  bass ' + fx.tides.length +
+    '  mid ' + fx.sweeps.length + '  hi ' + fx.sparks.length;
+}
+
+// ---------------------------------------------------------------------------
 // 4. Bucle de animacion
 // ---------------------------------------------------------------------------
 function tick(ts) {
@@ -310,6 +341,7 @@ function tick(ts) {
     frameIndex = (frameIndex + 1) % video.nFrames;
   }
   drawFrame(ts);
+  updateHud(ts);
 }
 
 // ---------------------------------------------------------------------------
@@ -330,15 +362,18 @@ async function boot() {
     return;
   }
 
-  // prefers-reduced-motion: el centelleo del bombo es lo mas intenso; sin
-  // movimiento la musica suena igual y el campo queda en reposo.
+  // prefers-reduced-motion (en Linux basta con tener las animaciones del
+  // escritorio desactivadas): los efectos pasan a modo CALMO en vez de
+  // apagarse. `?fx=full` fuerza el modo completo.
   try {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    fx.enabled = !mq.matches;
-    const onChange = (e) => { fx.enabled = !e.matches; if (!fx.enabled) fx.clear(); };
-    if (mq.addEventListener) mq.addEventListener('change', onChange);
-    else if (mq.addListener) mq.addListener(onChange);
-  } catch (e) { /* sin matchMedia: efectos activos */ }
+    const forceFull = /[?&]fx=full\b/.test(location.search);
+    const apply = () => { fx.calm = mq.matches && !forceFull; };
+    apply();
+    if (mq.addEventListener) mq.addEventListener('change', apply);
+    else if (mq.addListener) mq.addListener(apply);
+  } catch (e) { /* sin matchMedia: modo completo */ }
+  if (/[?&]fxdebug\b/.test(location.search)) hud = createHud();
 
   resize();
   window.addEventListener('resize', resize);

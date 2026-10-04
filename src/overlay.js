@@ -115,6 +115,35 @@ function setupAvatar() {
 }
 
 // ---------------------------------------------------------------------------
+// Boton de animaciones de la musica (junto al de ocultar el reproductor).
+// Se recuerda entre visitas; si el navegador no deja guardar, funciona igual.
+// ---------------------------------------------------------------------------
+const FX_STORAGE_KEY = 'xatspace.musicFx';
+
+function setupFxToggle() {
+  const btn = document.getElementById('fxToggle');
+  if (!btn) return;
+
+  try { if (localStorage.getItem(FX_STORAGE_KEY) === '0') sync.fxEnabled = false; } catch (e) {}
+
+  const render = () => {
+    const on = sync.fxEnabled;
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', String(on));
+    const label = on ? 'Desactivar animaciones de la música' : 'Activar animaciones de la música';
+    btn.setAttribute('aria-label', label);
+    btn.title = 'Animaciones de la música: ' + (on ? 'activadas' : 'desactivadas');
+  };
+  render();
+
+  btn.addEventListener('click', () => {
+    sync.fxEnabled = !sync.fxEnabled;
+    try { localStorage.setItem(FX_STORAGE_KEY, sync.fxEnabled ? '1' : '0'); } catch (e) {}
+    render();
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Play gate: al pulsar arranca toda la lista local desde la pista 1, el titulo
 // de bienvenida se retira, el dock aparece y el nombre se decodifica.
 // ---------------------------------------------------------------------------
@@ -265,6 +294,7 @@ window.addEventListener('DOMContentLoaded', () => {
   setupNameHover();
   setupPlayGate();
   initPlaylist();
+  setupFxToggle();
   setupIdleFade();
   // Texto ya resuelto detras del gate, listo para animar desde cero.
   renderSpans(TARGET_TEXT);

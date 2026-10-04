@@ -17,8 +17,14 @@ export const LANES = ['kick', 'bass', 'mid', 'hi'];
 const BEATMAP_DIR = 'assets/beatmaps/';
 const FORMAT_VERSION = 1;
 
-/** Un evento mas viejo que esto (p.ej. tras un parón del navegador) ya no se dibuja. */
-const FRESH_MS = 100;
+/**
+ * Un evento mas viejo que esto (p.ej. tras un paron del navegador) ya no se
+ * dibuja. Es generoso a proposito: algunos navegadores/audio en Linux
+ * actualizan `currentTime` a saltos de 100-250 ms, y con un margen corto casi
+ * todos los golpes caian "tarde" y se descartaban. El efecto nace con la edad
+ * que le toca, asi que un evento algo tardio sigue cayendo en su sitio.
+ */
+const FRESH_MS = 250;
 /** Adelanto con el que se disparan los efectos (compensa la latencia de pintado). */
 export const SYNC_LEAD_MS = 20;
 
@@ -60,7 +66,7 @@ export function parseBeatmap(json) {
 export function loadBeatmap(key) {
   let entry = cache.get(key);
   if (entry) return entry.promise;
-  entry = { map: undefined, promise: null };
+  entry = { map: undefined, error: null, promise: null };
   entry.promise = fetch(BEATMAP_DIR + encodeURIComponent(key) + '.json')
     .then((res) => {
       if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -68,14 +74,29 @@ export function loadBeatmap(key) {
     })
     .then((json) => {
       entry.map = parseBeatmap(json);
+      if (!entry.map) throw new Error('formato de mapa no valido');
+      entry.error = null;
       return entry.map;
     })
-    .catch(() => {            // sin mapa = sin efectos; la musica no se entera
+    .catch((err) => {         // sin mapa = sin efectos; la musica no se entera
       entry.map = null;
+      entry.error = String((err && err.message) || err);
+      // Aviso UNA vez por pista: es el fallo silencioso mas probable (la
+      // carpeta assets/beatmaps/ sin publicar).
+      console.warn('[beat-fx] sin mapa de ritmo para "' + key + '" (' + entry.error +
+        '): ' + BEATMAP_DIR + key + '.json. Sin el no hay efectos.');
       return null;
     });
   cache.set(key, entry);
   return entry.promise;
+}
+
+/** Estado legible de una pista para el diagnostico: 'ok' | 'cargando' | 'sin mapa (...)'. */
+export function beatmapStatus(key) {
+  const entry = cache.get(key);
+  if (!entry) return 'sin pedir';
+  if (entry.map) return 'ok';
+  return entry.error ? 'sin mapa (' + entry.error + ')' : 'cargando';
 }
 
 export function peekBeatmap(key) {
@@ -106,6 +127,7 @@ export class BeatConductor {
     this.map = null;
     this.cursor = [0, 0, 0, 0];
     this.lastMs = -1;
+    this.fired = [0, 0, 0, 0];     // diagnostico: eventos disparados por carril
   }
 
   /** Olvida la pista actual (pausa / parada). */
@@ -149,6 +171,7 @@ export class BeatConductor {
       while (c < lane.n && lane.t[c] <= ms) {
         const late = ms - lane.t[c];
         if (late <= FRESH_MS) {
+          this.fired[l]++;
           this.emit(l, lane.s[c] / 100, lane.d ? lane.d[c] : 0, late);
         }
         c++;

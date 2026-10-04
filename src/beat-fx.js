@@ -89,6 +89,10 @@ export class BeatFx {
   constructor() {
     this.rng = createRng(0xbea7);
     this.enabled = true;
+    // Modo calmo (prefers-reduced-motion): mismos golpes y mismas zonas, pero
+    // SIN centelleo aleatorio por frame (el patron de cada celda es estable) y
+    // con menos chispas. Se sigue viendo la musica sin estroboscopio.
+    this.calm = false;
 
     this.ripples = [];
     this.tides = [];
@@ -150,7 +154,7 @@ export class BeatFx {
       push(this.sweeps, MAX_SWEEPS, { t0, s, life: FX_STYLE.midLifeMs, dir: this.sweepDir });
     } else if (lane === LANE.HI) {
       const [lo, hi] = FX_STYLE.hiLifeMs;
-      const n = Math.round(8 + 26 * s);
+      const n = Math.round((8 + 26 * s) * (this.calm ? 0.5 : 1));
       for (let i = 0; i < n; i++) {
         push(this.sparks, MAX_SPARKS, {
           t0, s, life: lo + this.rng() * (hi - lo), u: this.rng(), v: this.rng(),
@@ -261,7 +265,8 @@ export class BeatFx {
       }
       // Centelleo: cada glifo se enciende con una probabilidad que crece con
       // la intensidad, re-sorteada en cada frame.
-      if (kb > 0.02 && this.rng() < 0.28 + 0.72 * kb) { best = kb; bestLane = LANE.KICK; }
+      const p = 0.28 + 0.72 * kb;
+      if (kb > 0.02 && (this.calm ? hash2(ci, ri) : this.rng()) < p) { best = kb; bestLane = LANE.KICK; }
     }
 
     // --- BASS: marea que sube, glifos pesados que se mecen ----------------
@@ -296,7 +301,7 @@ export class BeatFx {
           if (v > mv) mv = v;
         }
       }
-      if (mv > 0.03 && this.rng() < 0.35 + 0.65 * mv) {
+      if (mv > 0.03 && (this.calm ? hash2(ci + 31, ri) : this.rng()) < 0.35 + 0.65 * mv) {
         this.scr = 1;
         this.dy += ((ci & 1) ? 1 : -1) * this.cellPx * 0.45 * mv;   // zigzag por columnas
         if (mv > best) { best = mv; bestLane = LANE.MID; }
@@ -309,7 +314,7 @@ export class BeatFx {
     // Fantasma sobre fondo negro: el parpadeo de kick/mid se adelgaza para que
     // el fondo no se sature de texto; el de bass es ESTABLE (hash por celda).
     if (bestLane === LANE.KICK || bestLane === LANE.MID) {
-      this.ghost = this.rng() < 0.42 ? best : 0;
+      this.ghost = (this.calm ? hash2(ci + 7, ri) : this.rng()) < 0.42 ? best : 0;
     } else if (bestLane === LANE.BASS) {
       this.ghost = hash2(ci, ri) < bassV * 0.45 ? bassV : 0;
     }
