@@ -3,6 +3,9 @@ node_modules/
 *.log
 __pycache__/
 
+# Exportaciones de arena (<uuid>.patch): pesan MB y no forman parte del repo.
+*.patch
+
 # Agentes: las skills y su config son de la maquina, no del proyecto.
 .opencode/
 AGENTS.md
