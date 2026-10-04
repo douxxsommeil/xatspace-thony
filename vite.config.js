@@ -75,6 +75,7 @@ function rootAssetsDevServer() {
 function cleanStaleBundles() {
   return {
     name: 'xatspace-clean-stale-bundles',
+    apply: 'build',
     buildStart() {
       if (!fs.existsSync(OUT_ASSETS)) return;
       for (const f of fs.readdirSync(OUT_ASSETS)) {
@@ -111,6 +112,16 @@ function classicScriptHtml() {
         return `<script${clean ? ' ' + clean : ''} defer>`;
       });
       html = html.replace(/[ \t]*<link[^>]*rel="modulepreload"[^>]*>\n?/g, '');
+      // El bundle final se sirve como HTML clásico; el atributo crossorigin
+      // solo es necesario para el grafo de módulos y no para CSS.
+      html = html.replace(/<link([^>]*)>/g, (tag, attrs) => {
+        if (!/href="\.?\.?\/assets\/app-[^"]+\.css"/.test(attrs)) return tag;
+        const clean = attrs
+          .replace(/\s+crossorigin(?:="[^"]*")?/g, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        return `<link${clean ? ' ' + clean : ''}>`;
+      });
       html = html.replace(
         /(<html[^>]*>)/,
         '$1\n<!--\n  GENERADO POR VITE — no editar a mano.\n' +
